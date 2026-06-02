@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(npm install *)",
+      "Bash(npm ls *)",
+      "Bash(curl -s https://openrouter.ai/api/v1/models)",
+      "Bash(node -e \"let d='';process.stdin.on\\('data',c=>d+=c\\).on\\('end',\\(\\)=>{const j=JSON.parse\\(d\\);const m=j.data.filter\\(x=>/kimi|moonshot/i.test\\(x.id\\)\\);m.forEach\\(x=>console.log\\(x.id, '|', \\(x.pricing&&x.pricing.prompt==='0'?'FREE':'paid'\\)\\)\\);}\\)\")",
+      "Bash(npx tsx *)",
+      "Bash(node -e \"const e=require\\('./node_modules/tsx/package.json'\\).exports; console.log\\(JSON.stringify\\(Object.keys\\(e\\)\\)\\)\")",
+      "Bash(npm run *)",
+      "Bash(node cli.mjs)"
+    ]
+  }
+}
