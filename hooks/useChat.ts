@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef, useMemo, useCallback } from 'react';
 import { streamText, type CoreMessage } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
 import { readFileSync } from 'fs';
@@ -44,7 +44,7 @@ export function useChat(cfg: AppConfig) {
     [cfg.apiKey, cfg.baseURL]
   );
 
-  const requestApproval: ApprovalRequest = (title, detail, data) => {
+  const requestApproval: ApprovalRequest = useCallback((title, detail, data) => {
     return new Promise((resolve) => {
       approvalQueueRef.current.push({ title, detail, data, resolve });
       if (batchTimeoutRef.current) clearTimeout(batchTimeoutRef.current);
@@ -72,7 +72,9 @@ export function useChat(cfg: AppConfig) {
         });
       }, 50);
     });
-  };
+  }, []);
+
+  const tools = useMemo(() => createTools(requestApproval, setToolStatus), [requestApproval, setToolStatus]);
 
   const abort = () => {
      abortControllerRef.current?.abort();
@@ -178,7 +180,6 @@ export function useChat(cfg: AppConfig) {
     setIsLoading(true);
     setStreamTextState('');
 
-    const tools = createTools(requestApproval, setToolStatus);
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     const MAX_RETRIES = 4;
     const MAX_CONTINUE = 3;
