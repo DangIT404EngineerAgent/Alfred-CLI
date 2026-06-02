@@ -1,3 +1,4 @@
+import { promises as fsPromises } from 'fs';
 import { z } from 'zod';
 import { tool } from 'ai';
 import { spawn } from 'child_process';
@@ -165,12 +166,12 @@ export function createTools(
           let oldContent: string | null = null;
           try { oldContent = readFileSync(path, 'utf8'); } catch(e) {}
           
-          writeFileSync(path, content, 'utf8');
+          await fsPromises.writeFile(path, content, 'utf8');
           
           const syntaxErr = validateProjectSyntax();
           if (syntaxErr) {
              // Rollback
-             if (oldContent !== null) writeFileSync(path, oldContent, 'utf8');
+             if (oldContent !== null) await fsPromises.writeFile(path, oldContent, 'utf8');
              else rmSync(path, { force: true });
              onToolStatus('');
              return `Lỗi cú pháp sau khi ghi file! Đã tự động khôi phục lại (rollback).\nChi tiết lỗi:\n${syntaxErr}\nHãy sửa lại code và thử lại.`;
@@ -211,12 +212,12 @@ export function createTools(
           const newContent = content.replace(searchBlock, replaceBlock);
           
           // Ghi file tạm để test
-          writeFileSync(path, newContent, 'utf8');
+          await fsPromises.writeFile(path, newContent, 'utf8');
           
           const syntaxErr = validateProjectSyntax();
           if (syntaxErr) {
              // Rollback
-             writeFileSync(path, content, 'utf8');
+             await fsPromises.writeFile(path, content, 'utf8');
              onToolStatus('');
              return `Lỗi cú pháp sau khi sửa! Đã tự động khôi phục lại (rollback).\nChi tiết lỗi:\n${syntaxErr}\nHãy sửa lại code và thử lại.`;
           }
