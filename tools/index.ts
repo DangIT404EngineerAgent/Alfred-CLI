@@ -1,11 +1,8 @@
 import { z } from 'zod';
 import { tool } from 'ai';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import { readFileSync, writeFileSync } from 'fs';
+import { spawn } from 'child_process';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, statSync, readdirSync } from 'fs';
 import { scanFiles } from '../utils/fs';
-
-const execAsync = promisify(exec);
 
 export type ApprovalRequest = (title: string, detail: string) => Promise<boolean>;
 
@@ -17,10 +14,29 @@ export function createTools(requestApproval: ApprovalRequest) {
       execute: async ({ command }) => {
         if (!(await requestApproval('Chạy lệnh shell', command))) return 'Người dùng đã TỪ CHỐI chạy lệnh này.';
         try {
-          const { stdout, stderr } = await execAsync(command, { timeout: 60000, maxBuffer: 1024 * 1024 });
-          return (stdout || '') + (stderr ? `\n[stderr]\n${stderr}` : '') || '(không có output)';
+          return await new Promise((resolve) => {
+            const child = spawn(command, { shell: true });
+            let output = '';
+            
+            child.stdout.on('data', (data: Buffer) => {
+               const str = data.toString();
+               output += str;
+               if (str.trim()) console.log(str.trim());
+            });
+            child.stderr.on('data', (data: Buffer) => {
+               const str = data.toString();
+               output += str;
+               if (str.trim()) console.error(str.trim());
+            });
+            child.on('close', (code: number) => {
+               resolve(output || '(không có output)');
+            });
+            child.on('error', (err: Error) => {
+               resolve(`Lỗi khi chạy lệnh: ${err.message}\n${output}`);
+            });
+          });
         } catch (e: any) {
-          return `Lỗi: ${e.message}\n${e.stdout || ''}${e.stderr || ''}`;
+          return `Lỗi: ${e.message}`;
         }
       },
     }),
@@ -58,27 +74,85 @@ export function createTools(requestApproval: ApprovalRequest) {
       },
     }),
     replaceInFile: tool({
-      description: 'Tìm và thay thế một đoạn text trong file. Dùng để sửa code mà không cần in lại cả file.',
+      description: 'Thay thế một phạm vi các dòng trong file bằng code mới. Hữu ích để sửa code an toàn mà không bị lỗi thụt lề.',
       parameters: z.object({
         path: z.string().describe('Đường dẫn file cần sửa'),
-        oldText: z.string().describe('Đoạn text cũ cần tìm (phải khớp chính xác hoàn toàn)'),
-        newText: z.string().describe('Đoạn text mới sẽ thay thế vào'),
+        startLine: z.number().describe('Dòng bắt đầu cần thay thế (1-indexed)'),
+        endLine: z.number().describe('Dòng kết thúc cần thay thế (1-indexed, đã bao gồm dòng này)'),
+        newText: z.string().describe('Đoạn code mới sẽ chèn vào thay thế cho các dòng trên'),
       }),
-      execute: async ({ path, oldText, newText }) => {
-        const preview = `Thay thế:\n${oldText}\n\nThành:\n${newText}`;
+      execute: async ({ path, startLine, endLine, newText }) => {
+        const preview = `Thay thế từ dòng ${startLine} đến ${endLine} thành:\n${newText}`;
         if (!(await requestApproval(`Sửa file: ${path}`, preview))) return 'Người dùng đã TỪ CHỐI sửa file này.';
         try {
           const content = readFileSync(path, 'utf8');
-          if (!content.includes(oldText)) {
-            return `Lỗi: Không tìm thấy đoạn text cũ trong file. Vui lòng kiểm tra lại sự chính xác của text (khoảng trắng, xuống dòng...).`;
+          const lines = content.split('\n');
+          if (startLine < 1 || endLine > lines.length || startLine > endLine) {
+            return `Lỗi: Dòng không hợp lệ. File có ${lines.length} dòng.`;
           }
-          const updated = content.replace(oldText, newText);
-          writeFileSync(path, updated, 'utf8');
+          lines.splice(startLine - 1, endLine - startLine + 1, newText);
+          writeFileSync(path, lines.join('\n'), 'utf8');
           return `Đã sửa xong file: ${path}`;
         } catch (e: any) {
           return `Lỗi: ${e.message}`;
         }
       },
+    }),
+    listDirectory: tool({
+      description: 'Liệt kê các file và thư mục con trong một thư mục.',
+      parameters: z.object({ path: z.string().describe('Đường dẫn thư mục cần liệt kê') }),
+      execute: async ({ path }) => {
+        try {
+          const entries = readdirSync(path);
+          const results = entries.map(entry => {
+             const fullPath = `${path}/${entry}`;
+             try {
+                const isDir = statSync(fullPath).isDirectory();
+                return isDir ? `${entry}/` : entry;
+             } catch(e) { return entry; }
+          });
+          return results.join('\n');
+        } catch (e: any) {
+          return `Lỗi: ${e.message}`;
+        }
+      }
+    }),
+    createDirectory: tool({
+      description: 'Tạo một thư mục mới.',
+      parameters: z.object({ path: z.string().describe('Đường dẫn thư mục cần tạo') }),
+      execute: async ({ path }) => {
+        try {
+          mkdirSync(path, { recursive: true });
+          return `Đã tạo thư mục: ${path}`;
+        } catch (e: any) {
+          return `Lỗi: ${e.message}`;
+        }
+      }
+    }),
+    deleteFile: tool({
+      description: 'Xóa một file hoặc thư mục (xóa đệ quy).',
+      parameters: z.object({ path: z.string().describe('Đường dẫn file hoặc thư mục cần xóa') }),
+      execute: async ({ path }) => {
+         if (!(await requestApproval(`Xóa file/thư mục: ${path}`, 'Bạn có chắc chắn muốn xóa?'))) return 'Người dùng đã TỪ CHỐI xóa.';
+         try {
+           rmSync(path, { recursive: true, force: true });
+           return `Đã xóa: ${path}`;
+         } catch (e: any) {
+           return `Lỗi: ${e.message}`;
+         }
+      }
+    }),
+    getFileMetadata: tool({
+      description: 'Lấy thông tin metadata của một file (kích thước, thời gian).',
+      parameters: z.object({ path: z.string().describe('Đường dẫn file') }),
+      execute: async ({ path }) => {
+        try {
+          const stat = statSync(path);
+          return `Kích thước: ${stat.size} bytes\nTạo lúc: ${stat.birthtime}\nSửa lúc: ${stat.mtime}\nLà thư mục: ${stat.isDirectory()}`;
+        } catch (e: any) {
+          return `Lỗi: ${e.message}`;
+        }
+      }
     }),
     searchProject: tool({
       description: 'Dò tìm một từ khoá trong toàn bộ project (trừ các file bị bỏ qua bởi .gitignore).',
