@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo } from 'react';
 import { streamText, type CoreMessage } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
-import { readFileSync } from 'fs';
+import { readFileSync, promises as fsPromises } from 'fs';
 import { getEncoding } from 'js-tiktoken';
 import { type Item } from '../components/MessageView';
 import { createTools, type ApprovalRequest } from '../tools';
@@ -92,23 +92,26 @@ export function useChat(cfg: AppConfig) {
     }
 
     const used = attachments.filter((a) => text.includes('@' + a.path));
-    let inlineCtx = '';
     const MAX_FILE_SIZE = 50 * 1024;
-    for (const a of used) {
-      if (!a.inline) continue;
-      try {
-        let content = readFileSync(a.path, 'utf8');
-        let warning = '';
-        if (content.length > MAX_FILE_SIZE) {
-          content = content.slice(0, MAX_FILE_SIZE);
-          warning = `\n[CẢNH BÁO: File quá lớn. Đã cắt gọn còn 50KB để tránh tràn bộ nhớ.]`;
-        }
-        inlineCtx += `\n\n[Nội dung file ${a.path}]${warning}\n\`\`\`\n${content}\n\`\`\``;
-      } catch (e: any) {
-        inlineCtx += `\n\n[Không đọc được ${a.path}: ${e.message}]`;
-        logError(e);
-      }
-    }
+
+    const attachmentPromises = used.filter(a => a.inline).map(a =>
+      fsPromises.readFile(a.path, 'utf8')
+        .then(content => {
+          let warning = '';
+          if (content.length > MAX_FILE_SIZE) {
+            content = content.slice(0, MAX_FILE_SIZE);
+            warning = `\n[CẢNH BÁO: File quá lớn. Đã cắt gọn còn 50KB để tránh tràn bộ nhớ.]`;
+          }
+          return `\n\n[Nội dung file ${a.path}]${warning}\n\`\`\`\n${content}\n\`\`\``;
+        })
+        .catch(e => {
+          logError(e);
+          return `\n\n[Không đọc được ${a.path}: ${e.message}]`;
+        })
+    );
+    const inlineCtxResults = await Promise.all(attachmentPromises);
+    const inlineCtx = inlineCtxResults.join('');
+
     const aiText = text + inlineCtx;
 
     const MAX_TOKENS = 120_000;
@@ -141,14 +144,14 @@ export function useChat(cfg: AppConfig) {
       currentTokens += tokens;
     }
 
-    let projectContext = '';
     const ctxFiles = ['.quangiaairc', '.cursorrules', '.ai-instructions.md', 'CLAUDE.md'];
-    for (const file of ctxFiles) {
-       try {
-          const content = readFileSync(file, 'utf8');
-          projectContext += `\n\n[Context từ ${file}]\n${content}`;
-       } catch(e) {}
-    }
+    const ctxPromises = ctxFiles.map(file =>
+       fsPromises.readFile(file, 'utf8')
+          .then(content => `\n\n[Context từ ${file}]\n${content}`)
+          .catch(() => '')
+    );
+    const ctxResults = await Promise.all(ctxPromises);
+    const projectContext = ctxResults.join('');
 
     // System prompt được giữ nguyên cấu trúc đầu tiên trong danh sách 
     // và thiết lập 'ephemeral' để tối ưu hóa Prompt Caching của Anthropic/OpenRouter
