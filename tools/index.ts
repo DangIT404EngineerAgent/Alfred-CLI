@@ -6,13 +6,20 @@ import { scanFiles } from '../utils/fs';
 
 export type ApprovalRequest = (title: string, detail: string) => Promise<boolean>;
 
-export function createTools(requestApproval: ApprovalRequest) {
+export function createTools(
+  requestApproval: ApprovalRequest,
+  onToolStatus: (msg: string) => void
+) {
   return {
     runShell: tool({
       description: 'Chạy một câu lệnh terminal (bash/zsh) để kiểm tra log, test code, xem git status, v.v.',
       parameters: z.object({ command: z.string().describe('Câu lệnh cần chạy') }),
       execute: async ({ command }) => {
-        if (!(await requestApproval('Chạy lệnh shell', command))) return 'Người dùng đã TỪ CHỐI chạy lệnh này.';
+        onToolStatus(`⚙️ Đang chạy lệnh: ${command}`);
+        if (!(await requestApproval('Chạy lệnh shell', command))) {
+          onToolStatus('');
+          return 'Người dùng đã TỪ CHỐI chạy lệnh này.';
+        }
         try {
           return await new Promise((resolve) => {
             const child = spawn(command, { shell: true });
@@ -21,14 +28,15 @@ export function createTools(requestApproval: ApprovalRequest) {
             child.stdout.on('data', (data: Buffer) => {
                const str = data.toString();
                output += str;
-               if (str.trim()) console.log(str.trim());
+               if (str.trim()) onToolStatus(`[shell] ${str.trim().slice(-100)}`);
             });
             child.stderr.on('data', (data: Buffer) => {
                const str = data.toString();
                output += str;
-               if (str.trim()) console.error(str.trim());
+               if (str.trim()) onToolStatus(`[shell] ${str.trim().slice(-100)}`);
             });
             child.on('close', (code: number) => {
+               onToolStatus('');
                resolve(output || '(không có output)');
             });
             child.on('error', (err: Error) => {
@@ -44,14 +52,18 @@ export function createTools(requestApproval: ApprovalRequest) {
       description: 'Đọc nội dung một file để xem code hoặc dữ liệu.',
       parameters: z.object({ path: z.string().describe('Đường dẫn file cần đọc') }),
       execute: async ({ path }) => {
+        onToolStatus(`⚙️ Đang đọc file: ${path}`);
         try {
           const content = readFileSync(path, 'utf8');
           const MAX_SIZE = 50 * 1024; // 50KB
+          let result = content;
           if (content.length > MAX_SIZE) {
-            return content.slice(0, MAX_SIZE) + `\n\n[CẢNH BÁO: File quá lớn (${Math.round(content.length / 1024)}KB). Đã cắt gọn còn 50KB để tránh tràn bộ nhớ.]`;
+            result = content.slice(0, MAX_SIZE) + `\n\n[CẢNH BÁO: File quá lớn (${Math.round(content.length / 1024)}KB). Đã cắt gọn còn 50KB để tránh tràn bộ nhớ.]`;
           }
-          return content;
+          onToolStatus('');
+          return result;
         } catch (e: any) {
+          onToolStatus('');
           return `Lỗi: ${e.message}`;
         }
       },
@@ -63,12 +75,19 @@ export function createTools(requestApproval: ApprovalRequest) {
         content: z.string().describe('Nội dung đầy đủ sẽ ghi vào file'),
       }),
       execute: async ({ path, content }) => {
+        onToolStatus(`⚙️ Đang yêu cầu ghi file: ${path}`);
         const preview = content.length > 500 ? content.slice(0, 500) + '\n... (đã rút gọn)' : content;
-        if (!(await requestApproval(`Ghi file: ${path}`, preview))) return 'Người dùng đã TỪ CHỐI ghi file này.';
+        if (!(await requestApproval(`Ghi file: ${path}`, preview))) {
+          onToolStatus('');
+          return 'Người dùng đã TỪ CHỐI ghi file này.';
+        }
+        onToolStatus(`⚙️ Đang ghi file: ${path}`);
         try {
           writeFileSync(path, content, 'utf8');
+          onToolStatus('');
           return `Đã ghi xong file: ${path}`;
         } catch (e: any) {
+          onToolStatus('');
           return `Lỗi: ${e.message}`;
         }
       },
@@ -82,18 +101,26 @@ export function createTools(requestApproval: ApprovalRequest) {
         newText: z.string().describe('Đoạn code mới sẽ chèn vào thay thế cho các dòng trên'),
       }),
       execute: async ({ path, startLine, endLine, newText }) => {
+        onToolStatus(`⚙️ Đang yêu cầu sửa file: ${path}`);
         const preview = `Thay thế từ dòng ${startLine} đến ${endLine} thành:\n${newText}`;
-        if (!(await requestApproval(`Sửa file: ${path}`, preview))) return 'Người dùng đã TỪ CHỐI sửa file này.';
+        if (!(await requestApproval(`Sửa file: ${path}`, preview))) {
+          onToolStatus('');
+          return 'Người dùng đã TỪ CHỐI sửa file này.';
+        }
+        onToolStatus(`⚙️ Đang sửa file: ${path}`);
         try {
           const content = readFileSync(path, 'utf8');
           const lines = content.split('\n');
           if (startLine < 1 || endLine > lines.length || startLine > endLine) {
+            onToolStatus('');
             return `Lỗi: Dòng không hợp lệ. File có ${lines.length} dòng.`;
           }
           lines.splice(startLine - 1, endLine - startLine + 1, newText);
           writeFileSync(path, lines.join('\n'), 'utf8');
+          onToolStatus('');
           return `Đã sửa xong file: ${path}`;
         } catch (e: any) {
+          onToolStatus('');
           return `Lỗi: ${e.message}`;
         }
       },
@@ -102,6 +129,7 @@ export function createTools(requestApproval: ApprovalRequest) {
       description: 'Liệt kê các file và thư mục con trong một thư mục.',
       parameters: z.object({ path: z.string().describe('Đường dẫn thư mục cần liệt kê') }),
       execute: async ({ path }) => {
+        onToolStatus(`⚙️ Đang liệt kê thư mục: ${path}`);
         try {
           const entries = readdirSync(path);
           const results = entries.map(entry => {
@@ -111,8 +139,10 @@ export function createTools(requestApproval: ApprovalRequest) {
                 return isDir ? `${entry}/` : entry;
              } catch(e) { return entry; }
           });
+          onToolStatus('');
           return results.join('\n');
         } catch (e: any) {
+          onToolStatus('');
           return `Lỗi: ${e.message}`;
         }
       }
@@ -121,10 +151,13 @@ export function createTools(requestApproval: ApprovalRequest) {
       description: 'Tạo một thư mục mới.',
       parameters: z.object({ path: z.string().describe('Đường dẫn thư mục cần tạo') }),
       execute: async ({ path }) => {
+        onToolStatus(`⚙️ Đang tạo thư mục: ${path}`);
         try {
           mkdirSync(path, { recursive: true });
+          onToolStatus('');
           return `Đã tạo thư mục: ${path}`;
         } catch (e: any) {
+          onToolStatus('');
           return `Lỗi: ${e.message}`;
         }
       }
@@ -133,11 +166,18 @@ export function createTools(requestApproval: ApprovalRequest) {
       description: 'Xóa một file hoặc thư mục (xóa đệ quy).',
       parameters: z.object({ path: z.string().describe('Đường dẫn file hoặc thư mục cần xóa') }),
       execute: async ({ path }) => {
-         if (!(await requestApproval(`Xóa file/thư mục: ${path}`, 'Bạn có chắc chắn muốn xóa?'))) return 'Người dùng đã TỪ CHỐI xóa.';
+         onToolStatus(`⚙️ Đang yêu cầu xóa: ${path}`);
+         if (!(await requestApproval(`Xóa file/thư mục: ${path}`, 'Bạn có chắc chắn muốn xóa?'))) {
+           onToolStatus('');
+           return 'Người dùng đã TỪ CHỐI xóa.';
+         }
+         onToolStatus(`⚙️ Đang xóa: ${path}`);
          try {
            rmSync(path, { recursive: true, force: true });
+           onToolStatus('');
            return `Đã xóa: ${path}`;
          } catch (e: any) {
+           onToolStatus('');
            return `Lỗi: ${e.message}`;
          }
       }
@@ -146,10 +186,13 @@ export function createTools(requestApproval: ApprovalRequest) {
       description: 'Lấy thông tin metadata của một file (kích thước, thời gian).',
       parameters: z.object({ path: z.string().describe('Đường dẫn file') }),
       execute: async ({ path }) => {
+        onToolStatus(`⚙️ Đang xem thông tin: ${path}`);
         try {
           const stat = statSync(path);
+          onToolStatus('');
           return `Kích thước: ${stat.size} bytes\nTạo lúc: ${stat.birthtime}\nSửa lúc: ${stat.mtime}\nLà thư mục: ${stat.isDirectory()}`;
         } catch (e: any) {
+          onToolStatus('');
           return `Lỗi: ${e.message}`;
         }
       }
@@ -160,6 +203,7 @@ export function createTools(requestApproval: ApprovalRequest) {
         keyword: z.string().describe('Từ khoá cần tìm'),
       }),
       execute: async ({ keyword }) => {
+        onToolStatus(`⚙️ Đang tìm kiếm: "${keyword}"`);
         try {
           const files = await scanFiles(process.cwd());
           const results: string[] = [];
@@ -178,10 +222,12 @@ export function createTools(requestApproval: ApprovalRequest) {
               // skip unreadable files
             }
           }
+          onToolStatus('');
           if (results.length === 0) return `Không tìm thấy "${keyword}" trong project.`;
           const limited = results.slice(0, 50);
           return limited.join('\n') + (results.length > 50 ? `\n\n... (đã ẩn ${results.length - 50} kết quả)` : '');
         } catch (e: any) {
+          onToolStatus('');
           return `Lỗi quét file: ${e.message}`;
         }
       },

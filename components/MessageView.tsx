@@ -2,7 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { renderMarkdown } from '../utils/format';
 
-export type Item = { id: number; role: 'user' | 'assistant' | 'system'; content: string };
+export type Item = { id: number; role: 'user' | 'assistant' | 'system'; content: string; attachments?: string[] };
 
 export function MessageView({ item }: { item: Item }) {
   const { role } = item;
@@ -12,6 +12,9 @@ export function MessageView({ item }: { item: Item }) {
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Text bold color={color}>{label}</Text>
+      {item.attachments && item.attachments.length > 0 && (
+        <Text dimColor>📎 Đã đính kèm: {item.attachments.join(', ')}</Text>
+      )}
       <Text>{content}</Text>
     </Box>
   );
