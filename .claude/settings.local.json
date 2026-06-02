@@ -9,7 +9,9 @@
       "Bash(npx tsx *)",
       "Bash(node -e \"const e=require\\('./node_modules/tsx/package.json'\\).exports; console.log\\(JSON.stringify\\(Object.keys\\(e\\)\\)\\)\")",
       "Bash(npm run *)",
-      "Bash(node cli.mjs)"
+      "Bash(node cli.mjs)",
+      "Bash([ -d \"node_modules/$p\" ])",
+      "Bash(node -e \"console.log\\('node', process.version\\)\")"
     ]
   }
 }

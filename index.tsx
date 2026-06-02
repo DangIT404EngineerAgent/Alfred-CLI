@@ -7,58 +7,19 @@ import { config as loadEnv } from 'dotenv';
 import { z } from 'zod';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { readFileSync, writeFileSync, readdirSync, type Dirent } from 'fs';
-import { relative, join, sep } from 'path';
-import { marked } from 'marked';
-import { markedTerminal } from 'marked-terminal';
+import { readFileSync, writeFileSync } from 'fs';
 import { loadConfig, saveConfig, type AppConfig } from './config';
 import { fetchModels, type ModelInfo } from './openrouter';
 
+import Spinner from 'ink-spinner';
+
+import { scanFiles } from './utils/fs';
+import { renderMarkdown, maskKey } from './utils/format';
+import { MessageView, type Item } from './components/MessageView';
+
+import { createTools } from './tools';
+
 loadEnv(); // nạp .env (làm giá trị mặc định cho config)
-const execAsync = promisify(exec);
-
-// ---- Markdown -> ANSI cho terminal ----
-const TERM_WIDTH = Math.min(100, (process.stdout.columns || 80) - 2);
-marked.use(markedTerminal({ width: TERM_WIDTH, reflowText: true }) as any);
-function renderMarkdown(text: string): string {
-  try {
-    return (marked.parse(text) as string).replace(/\n+$/, '');
-  } catch {
-    return text;
-  }
-}
-
-function maskKey(k: string): string {
-  if (k.length <= 12) return k ? '••••' : '(chưa có)';
-  return `${k.slice(0, 8)}…${k.slice(-4)}`;
-}
-
-// ---- Quét file cho tính năng @ (đệ quy, bỏ node_modules/.git/thư mục ẩn) ----
-const IGNORE_DIRS = new Set(['node_modules', 'dist', 'build', 'coverage']);
-function scanFiles(root: string, max = 2000): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    if (out.length >= max) return;
-    let entries: Dirent[];
-    try {
-      entries = readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (out.length >= max) return;
-      const full = join(dir, e.name);
-      if (e.isDirectory()) {
-        if (IGNORE_DIRS.has(e.name) || e.name.startsWith('.')) continue;
-        walk(full);
-      } else if (e.isFile()) {
-        out.push(relative(root, full).split(sep).join('/'));
-      }
-    }
-  };
-  walk(root);
-  return out;
-}
 
 // Token @ đang gõ ở cuối input (đứng đầu dòng hoặc sau khoảng trắng).
 const AT_RE = /(^|\s)@([^@\s]*)$/;
@@ -73,27 +34,14 @@ const HELP_TEXT =
   '  exit             – thoát';
 
 type Mode = 'chat' | 'settings' | 'editKey' | 'picker';
-type Item = { id: number; role: 'user' | 'assistant' | 'system'; content: string };
 type PendingApproval = { title: string; detail: string; resolve: (ok: boolean) => void };
-
-function MessageView({ item }: { item: Item }) {
-  const { role } = item;
-  const label = role === 'user' ? '👨‍💻 Cậu chủ' : role === 'system' ? 'ℹ️  Hệ thống' : '🎩 Quản gia AI';
-  const color = role === 'user' ? 'blue' : role === 'system' ? 'yellow' : 'green';
-  const content = role === 'assistant' ? renderMarkdown(item.content) : item.content;
-  return (
-    <Box flexDirection="column" marginBottom={1}>
-      <Text bold color={color}>{label}</Text>
-      <Text>{content}</Text>
-    </Box>
-  );
-}
 
 const App = () => {
   const { exit } = useApp();
   const [cfg, setCfg] = useState<AppConfig>(() => loadConfig());
   const idRef = useRef(0);
   const nextId = () => ++idRef.current;
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [items, setItems] = useState<Item[]>(() => [
     { id: 0, role: 'system', content: 'Chào Cậu chủ! Gõ /help để xem lệnh, Ctrl+S để mở cài đặt.' },
   ]);
@@ -108,6 +56,7 @@ const App = () => {
   const [attachments, setAttachments] = useState<{ path: string; inline: boolean }[]>([]);
   const [allFiles, setAllFiles] = useState<string[]>([]);
   const [atCursor, setAtCursor] = useState(0);
+  const [isScanning, setIsScanning] = useState(false);
 
   // picker state
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -168,7 +117,13 @@ const App = () => {
   const handleInputChange = (val: string) => {
     setInput(val);
     setAtCursor(0);
-    if (AT_RE.test(val) && allFiles.length === 0) setAllFiles(scanFiles(process.cwd()));
+    if (AT_RE.test(val) && allFiles.length === 0 && !isScanning) {
+      setIsScanning(true);
+      scanFiles(process.cwd()).then((files) => {
+        setAllFiles(files);
+        setIsScanning(false);
+      });
+    }
   };
 
   // Chèn file đã chọn vào ô nhập; inline=true → nhúng nội dung, false → chỉ gắn thẻ @path.
@@ -182,8 +137,11 @@ const App = () => {
   useInput(
     (char, key) => {
       if (key.ctrl && char === 's') setMode('settings');
+      if (key.ctrl && char === 'c' && isLoading) {
+        abortControllerRef.current?.abort();
+      }
     },
-    { isActive: mode === 'chat' && !pendingApproval && !isLoading }
+    { isActive: mode === 'chat' && !pendingApproval }
   );
 
   useInput(
@@ -306,20 +264,42 @@ const App = () => {
     // ---- gắn file @: nhúng nội dung cho mục inline, mục còn lại để AI tự readFile ----
     const used = attachments.filter((a) => text.includes('@' + a.path));
     let inlineCtx = '';
+    const MAX_FILE_SIZE = 50 * 1024; // 50KB
     for (const a of used) {
       if (!a.inline) continue;
       try {
-        inlineCtx += `\n\n[Nội dung file ${a.path}]\n\`\`\`\n${readFileSync(a.path, 'utf8')}\n\`\`\``;
+        let content = readFileSync(a.path, 'utf8');
+        let warning = '';
+        if (content.length > MAX_FILE_SIZE) {
+          content = content.slice(0, MAX_FILE_SIZE);
+          warning = `\n[CẢNH BÁO: File quá lớn. Đã cắt gọn còn 50KB để tránh tràn bộ nhớ.]`;
+        }
+        inlineCtx += `\n\n[Nội dung file ${a.path}]${warning}\n\`\`\`\n${content}\n\`\`\``;
       } catch (e: any) {
         inlineCtx += `\n\n[Không đọc được ${a.path}: ${e.message}]`;
       }
     }
     const aiText = text + inlineCtx;
 
+    const MAX_CONTEXT_MESSAGES = 20;
+    
+    // Lọc lịch sử hội thoại, bỏ system, chỉ giữ lại giới hạn MAX_CONTEXT_MESSAGES
+    const historyMessages = items
+      .filter((i) => i.role === 'user' || i.role === 'assistant');
+      
+    let contextMessages = historyMessages;
+    if (historyMessages.length > MAX_CONTEXT_MESSAGES) {
+      contextMessages = historyMessages.slice(historyMessages.length - MAX_CONTEXT_MESSAGES);
+      // Thêm một tin nhắn hệ thống nhắc nhở bộ nhớ đã bị cắt
+      contextMessages.unshift({
+        id: -1,
+        role: 'user', // dùng user thay vì system vì openrouter sometimes strict about first message
+        content: '[HỆ THỐNG: Lịch sử hội thoại cũ đã bị cắt bớt để tiết kiệm bộ nhớ.]'
+      } as any);
+    }
+
     const apiMessages: CoreMessage[] = [
-      ...items
-        .filter((i) => i.role === 'user' || i.role === 'assistant')
-        .map((i) => ({ role: i.role, content: i.content }) as CoreMessage),
+      ...contextMessages.map((i) => ({ role: i.role, content: i.content }) as CoreMessage),
       { role: 'user', content: aiText },
     ];
     addItem('user', text);
@@ -327,53 +307,11 @@ const App = () => {
     setIsLoading(true);
     setStreamTextState('');
 
-    const tools = {
-      runShell: tool({
-        description: 'Chạy một câu lệnh terminal (bash/zsh) để kiểm tra log, test code, xem git status, v.v.',
-        parameters: z.object({ command: z.string().describe('Câu lệnh cần chạy') }),
-        execute: async ({ command }) => {
-          if (!(await requestApproval('Chạy lệnh shell', command))) return 'Người dùng đã TỪ CHỐI chạy lệnh này.';
-          try {
-            const { stdout, stderr } = await execAsync(command, { timeout: 60000, maxBuffer: 1024 * 1024 });
-            return (stdout || '') + (stderr ? `\n[stderr]\n${stderr}` : '') || '(không có output)';
-          } catch (e: any) {
-            return `Lỗi: ${e.message}\n${e.stdout || ''}${e.stderr || ''}`;
-          }
-        },
-      }),
-      readFile: tool({
-        description: 'Đọc nội dung một file để xem code hoặc dữ liệu.',
-        parameters: z.object({ path: z.string().describe('Đường dẫn file cần đọc') }),
-        execute: async ({ path }) => {
-          try {
-            return readFileSync(path, 'utf8');
-          } catch (e: any) {
-            return `Lỗi: ${e.message}`;
-          }
-        },
-      }),
-      writeFile: tool({
-        description: 'Ghi/đè nội dung vào một file (tạo mới hoặc thay thế toàn bộ).',
-        parameters: z.object({
-          path: z.string().describe('Đường dẫn file cần ghi'),
-          content: z.string().describe('Nội dung đầy đủ sẽ ghi vào file'),
-        }),
-        execute: async ({ path, content }) => {
-          const preview = content.length > 500 ? content.slice(0, 500) + '\n... (đã rút gọn)' : content;
-          if (!(await requestApproval(`Ghi file: ${path}`, preview))) return 'Người dùng đã TỪ CHỐI ghi file này.';
-          try {
-            writeFileSync(path, content, 'utf8');
-            return `Đã ghi xong file: ${path}`;
-          } catch (e: any) {
-            return `Lỗi: ${e.message}`;
-          }
-        },
-      }),
-    };
+    const tools = createTools(requestApproval);
 
     const system =
       'Bạn là Quản gia AI, trợ lý đắc lực cho Cậu chủ Đăng - sinh viên IT năm cuối. ' +
-      'Bạn có các công cụ: runShell (chạy lệnh terminal), readFile (đọc file), writeFile (ghi file). ' +
+      'Bạn có các công cụ: runShell, readFile, writeFile, replaceInFile, searchProject. ' +
       'Hãy chủ động dùng công cụ để hoàn thành việc Cậu chủ giao thay vì chỉ hướng dẫn suông. ' +
       'Kiên trì làm tới khi xong trọn vẹn yêu cầu, không bỏ dở giữa chừng; nếu còn bước thì làm tiếp. ' +
       'Trả lời ngắn gọn, súc tích, dùng markdown cho code.';
@@ -384,15 +322,35 @@ const App = () => {
 
     // Gọi model 1 lượt, trả về { text, finishReason }; ném lỗi nếu provider lỗi.
     const callOnce = async (msgs: CoreMessage[], prefix: string) => {
-      const result = streamText({ model: provider(cfg.model), messages: msgs, maxSteps: 25, tools, system });
+      const abortController = new AbortController();
+      abortControllerRef.current = abortController;
+      
+      const result = streamText({ 
+        model: provider(cfg.model), 
+        messages: msgs, 
+        maxSteps: 25, 
+        tools, 
+        system,
+        abortSignal: abortController.signal
+      });
+      
       let full = '';
-      for await (const chunk of result.textStream) {
-        full += chunk;
-        setStreamTextState(prefix + full);
+      try {
+        for await (const chunk of result.textStream) {
+          full += chunk;
+          setStreamTextState(prefix + full);
+        }
+        const finishReason = await result.finishReason;
+        if (finishReason === 'error') throw new Error('Provider trả về lỗi');
+        return { text: full, finishReason };
+      } catch (e: any) {
+        if (e.name === 'AbortError') {
+          return { text: full, finishReason: 'abort' };
+        }
+        throw e;
+      } finally {
+        abortControllerRef.current = null;
       }
-      const finishReason = await result.finishReason;
-      if (finishReason === 'error') throw new Error('Provider trả về lỗi');
-      return { text: full, finishReason };
     };
 
     // Bọc retry: lỗi kết nối/429 hoặc AI im lặng đều thử lại với backoff.
@@ -427,6 +385,12 @@ const App = () => {
         const prefix = combined ? combined + '\n' : '';
         const { text: turnText, finishReason } = await callWithRetry(msgs, prefix);
         combined = prefix + turnText;
+        
+        if (finishReason === 'abort') {
+          combined += '\n[CẢNH BÁO: Đã huỷ yêu cầu bởi người dùng]';
+          break;
+        }
+
         // AI bị cắt vì hết độ dài → tự nhắc tiếp tục để làm cho xong.
         if (finishReason === 'length' && cont < MAX_CONTINUE) {
           msgs = [
@@ -469,13 +433,18 @@ const App = () => {
       {/* Streaming text đang chạy */}
       {streamTextState && (
         <Box flexDirection="column" marginBottom={1}>
-          <Text bold color="green">🎩 Quản gia AI</Text>
+          <Text bold color="green">
+            🎩 Quản gia AI{' '}
+            {isLoading && !pendingApproval && <Text color="yellow"><Spinner type="dots" /></Text>}
+          </Text>
           <Text>{streamTextState}</Text>
         </Box>
       )}
 
       {isLoading && !streamTextState && !pendingApproval && (
-        <Text color="yellow" italic>… Quản gia đang suy nghĩ …</Text>
+        <Text color="yellow">
+          <Spinner type="dots" /> <Text italic>Quản gia đang suy nghĩ …</Text>
+        </Text>
       )}
 
       {/* Hộp xin phép */}
@@ -555,17 +524,23 @@ const App = () => {
           {atActive && (
             <Box flexDirection="column" borderStyle="round" borderColor="magenta" paddingX={1}>
               <Text bold color="magenta">📎 Gắn file — gõ để lọc · ↑↓ chọn · Enter kèm nội dung · Tab chỉ gắn thẻ</Text>
-              {atFiltered.length === 0 && <Text dimColor>Không có file khớp “{atQuery || '(tất cả)'}”.</Text>}
-              {atWindowed.map((f, i) => {
-                const selected = atStart + i === atCursor;
-                return (
-                  <Text key={f} color={selected ? 'cyan' : undefined} inverse={selected}>
-                    {selected ? '› ' : '  '}
-                    {f}
-                  </Text>
-                );
-              })}
-              {atFiltered.length > 0 && <Text dimColor>{atFiltered.length} file</Text>}
+              {isScanning ? (
+                <Text color="yellow">Đang quét thư mục dự án…</Text>
+              ) : (
+                <>
+                  {atFiltered.length === 0 && <Text dimColor>Không có file khớp “{atQuery || '(tất cả)'}”.</Text>}
+                  {atWindowed.map((f, i) => {
+                    const selected = atStart + i === atCursor;
+                    return (
+                      <Text key={f} color={selected ? 'cyan' : undefined} inverse={selected}>
+                        {selected ? '› ' : '  '}
+                        {f}
+                      </Text>
+                    );
+                  })}
+                  {atFiltered.length > 0 && <Text dimColor>{atFiltered.length} file</Text>}
+                </>
+              )}
             </Box>
           )}
 
