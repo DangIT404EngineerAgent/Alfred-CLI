@@ -1,10 +1,63 @@
 import { z } from 'zod';
 import { tool } from 'ai';
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, mkdirSync, rmSync, statSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, statSync, readdirSync, copyFileSync, cpSync, existsSync } from 'fs';
+import { spawnSync } from 'child_process';
+import { join, basename } from 'path';
+import * as os from 'os';
+import * as pty from 'node-pty';
 import { scanFiles } from '../utils/fs';
 
-export type ApprovalRequest = (title: string, detail: string) => Promise<boolean>;
+function validateProjectSyntax(): string | null {
+  try {
+    const res = spawnSync('npm', ['run', 'typecheck'], { cwd: process.cwd(), encoding: 'utf8', shell: true });
+    if (res.status !== 0) {
+       const out = res.stdout || res.stderr || '';
+       return out.length > 800 ? out.slice(0, 800) + '\n... (đã rút gọn)' : out;
+    }
+  } catch (e: any) {
+    // Nếu không chạy được lệnh, bỏ qua
+  }
+  return null;
+}
+
+const BACKUP_DIR = join(os.homedir(), '.terminalai', 'backups');
+const BACKUP_MAP_PATH = join(BACKUP_DIR, 'latest_backup.json');
+
+function backupPathObj(targetPath: string) {
+  try {
+    if (!existsSync(BACKUP_DIR)) mkdirSync(BACKUP_DIR, { recursive: true });
+    if (existsSync(targetPath)) {
+      const backupPath = join(BACKUP_DIR, `${Date.now()}_${basename(targetPath)}`);
+      cpSync(targetPath, backupPath, { recursive: true });
+      let map: any = { stack: [] };
+      try { if (existsSync(BACKUP_MAP_PATH)) map = JSON.parse(readFileSync(BACKUP_MAP_PATH, 'utf8')); } catch(e) {}
+      map.stack.push({ original: targetPath, backup: backupPath, timestamp: Date.now() });
+      writeFileSync(BACKUP_MAP_PATH, JSON.stringify(map), 'utf8');
+    }
+  } catch(e) { console.error('Lỗi khi backup:', e); }
+}
+
+export function restoreLatestBackup(): string {
+  try {
+    if (!existsSync(BACKUP_MAP_PATH)) return 'Không có bản sao lưu nào.';
+    let map = JSON.parse(readFileSync(BACKUP_MAP_PATH, 'utf8'));
+    if (!map.stack || map.stack.length === 0) return 'Không có bản sao lưu nào.';
+    
+    const last = map.stack.pop();
+    if (existsSync(last.backup)) {
+      cpSync(last.backup, last.original, { recursive: true });
+      writeFileSync(BACKUP_MAP_PATH, JSON.stringify(map), 'utf8');
+      return `✅ Đã khôi phục: ${last.original}`;
+    } else {
+      return '❌ File sao lưu không tồn tại trên ổ cứng.';
+    }
+  } catch(e: any) {
+    return `❌ Lỗi khi khôi phục: ${e.message}`;
+  }
+}
+
+export type ApprovalRequest = (title: string, detail: string, data?: any) => Promise<boolean>;
 
 export function createTools(
   requestApproval: ApprovalRequest,
@@ -12,38 +65,60 @@ export function createTools(
 ) {
   return {
     runShell: tool({
-      description: 'Chạy một câu lệnh terminal (bash/zsh) để kiểm tra log, test code, xem git status, v.v.',
+      description: 'Chạy một câu lệnh terminal (bash/cmd/powershell). Hỗ trợ interactive thông qua node-pty.',
       parameters: z.object({ command: z.string().describe('Câu lệnh cần chạy') }),
       execute: async ({ command }) => {
         onToolStatus(`⚙️ Đang chạy lệnh: ${command}`);
+        // Command Sanitization Blocklist
+        if (/(rm\s+-rf\s+(\/|\*|~\/?$))|(mkfs\.)|(dd\s+if=)/i.test(command.trim())) {
+           return 'CẢNH BÁO BẢO MẬT: Lệnh này bị cấm vì có nguy cơ phá hoại hệ thống. Hãy sử dụng giải pháp an toàn hơn!';
+        }
+        if (/(cat|type|less|more|tail|head)\s+.*?\.env/i.test(command.trim())) {
+           return 'CẢNH BÁO BẢO MẬT: Không được phép đọc trực tiếp file .env để bảo vệ secret keys.';
+        }
         if (!(await requestApproval('Chạy lệnh shell', command))) {
           onToolStatus('');
           return 'Người dùng đã TỪ CHỐI chạy lệnh này.';
         }
         try {
           return await new Promise((resolve) => {
-            const child = spawn(command, { shell: true });
+            const isWin = os.platform() === 'win32';
+            const shell = isWin ? process.env.COMSPEC || 'cmd.exe' : process.env.SHELL || 'bash';
+            const args = isWin ? ['/c', command] : ['-c', command];
+            
+            const ptyProcess = pty.spawn(shell, args, {
+              name: 'xterm-color',
+              cols: process.stdout.columns || 80,
+              rows: process.stdout.rows || 30,
+              cwd: process.cwd(),
+              env: process.env as any
+            });
+
             let output = '';
             
-            child.stdout.on('data', (data: Buffer) => {
-               const str = data.toString();
-               output += str;
-               if (str.trim()) onToolStatus(`[shell] ${str.trim().slice(-100)}`);
+            // Lắng nghe stdin từ ứng dụng nếu có
+            const onData = (data: Buffer) => {
+               ptyProcess.write(data.toString());
+            };
+            if (process.stdin.isTTY) {
+               process.stdin.on('data', onData);
+            }
+
+            ptyProcess.onData((data: string) => {
+              output += data;
+              if (data.trim()) onToolStatus(`[shell] ${data.trim().slice(-100)}`);
             });
-            child.stderr.on('data', (data: Buffer) => {
-               const str = data.toString();
-               output += str;
-               if (str.trim()) onToolStatus(`[shell] ${str.trim().slice(-100)}`);
-            });
-            child.on('close', (code: number) => {
-               onToolStatus('');
-               resolve(output || '(không có output)');
-            });
-            child.on('error', (err: Error) => {
-               resolve(`Lỗi khi chạy lệnh: ${err.message}\n${output}`);
+
+            ptyProcess.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
+              if (process.stdin.isTTY) {
+                 process.stdin.off('data', onData);
+              }
+              onToolStatus('');
+              resolve(output || '(không có output)');
             });
           });
         } catch (e: any) {
+          onToolStatus('');
           return `Lỗi: ${e.message}`;
         }
       },
@@ -77,13 +152,30 @@ export function createTools(
       execute: async ({ path, content }) => {
         onToolStatus(`⚙️ Đang yêu cầu ghi file: ${path}`);
         const preview = content.length > 500 ? content.slice(0, 500) + '\n... (đã rút gọn)' : content;
-        if (!(await requestApproval(`Ghi file: ${path}`, preview))) {
+        if (!(await requestApproval(`Ghi file: ${path}`, preview, { type: 'writeFile', content }))) {
           onToolStatus('');
           return 'Người dùng đã TỪ CHỐI ghi file này.';
         }
         onToolStatus(`⚙️ Đang ghi file: ${path}`);
         try {
+          // Backup file trước khi ghi đè
+          backupPathObj(path);
+          
+          // Lưu lại nội dung cũ để rollback nếu validation lỗi
+          let oldContent: string | null = null;
+          try { oldContent = readFileSync(path, 'utf8'); } catch(e) {}
+          
           writeFileSync(path, content, 'utf8');
+          
+          const syntaxErr = validateProjectSyntax();
+          if (syntaxErr) {
+             // Rollback
+             if (oldContent !== null) writeFileSync(path, oldContent, 'utf8');
+             else rmSync(path, { force: true });
+             onToolStatus('');
+             return `Lỗi cú pháp sau khi ghi file! Đã tự động khôi phục lại (rollback).\nChi tiết lỗi:\n${syntaxErr}\nHãy sửa lại code và thử lại.`;
+          }
+          
           onToolStatus('');
           return `Đã ghi xong file: ${path}`;
         } catch (e: any) {
@@ -93,30 +185,42 @@ export function createTools(
       },
     }),
     replaceInFile: tool({
-      description: 'Thay thế một phạm vi các dòng trong file bằng code mới. Hữu ích để sửa code an toàn mà không bị lỗi thụt lề.',
+      description: 'Thay thế một khối code cũ bằng khối code mới trong file (Search & Replace Block). Hữu ích để sửa code an toàn.',
       parameters: z.object({
         path: z.string().describe('Đường dẫn file cần sửa'),
-        startLine: z.number().describe('Dòng bắt đầu cần thay thế (1-indexed)'),
-        endLine: z.number().describe('Dòng kết thúc cần thay thế (1-indexed, đã bao gồm dòng này)'),
-        newText: z.string().describe('Đoạn code mới sẽ chèn vào thay thế cho các dòng trên'),
+        searchBlock: z.string().describe('Đoạn code cũ chính xác cần tìm'),
+        replaceBlock: z.string().describe('Đoạn code mới sẽ chèn vào thay thế'),
       }),
-      execute: async ({ path, startLine, endLine, newText }) => {
+      execute: async ({ path, searchBlock, replaceBlock }) => {
         onToolStatus(`⚙️ Đang yêu cầu sửa file: ${path}`);
-        const preview = `Thay thế từ dòng ${startLine} đến ${endLine} thành:\n${newText}`;
-        if (!(await requestApproval(`Sửa file: ${path}`, preview))) {
+        const preview = `Thay thế block:\n${searchBlock}\nThành:\n${replaceBlock}`;
+        if (!(await requestApproval(`Sửa file: ${path}`, preview.slice(0, 500) + (preview.length > 500 ? '...' : ''), { type: 'diff', searchBlock, replaceBlock }))) {
           onToolStatus('');
           return 'Người dùng đã TỪ CHỐI sửa file này.';
         }
         onToolStatus(`⚙️ Đang sửa file: ${path}`);
         try {
+          // Backup file trước khi sửa
+          backupPathObj(path);
+          
           const content = readFileSync(path, 'utf8');
-          const lines = content.split('\n');
-          if (startLine < 1 || endLine > lines.length || startLine > endLine) {
+          if (!content.includes(searchBlock)) {
             onToolStatus('');
-            return `Lỗi: Dòng không hợp lệ. File có ${lines.length} dòng.`;
+            return `Lỗi: Không tìm thấy khối mã cũ trong file. Vui lòng đảm bảo searchBlock khớp chính xác từng ký tự và khoảng trắng.`;
           }
-          lines.splice(startLine - 1, endLine - startLine + 1, newText);
-          writeFileSync(path, lines.join('\n'), 'utf8');
+          const newContent = content.replace(searchBlock, replaceBlock);
+          
+          // Ghi file tạm để test
+          writeFileSync(path, newContent, 'utf8');
+          
+          const syntaxErr = validateProjectSyntax();
+          if (syntaxErr) {
+             // Rollback
+             writeFileSync(path, content, 'utf8');
+             onToolStatus('');
+             return `Lỗi cú pháp sau khi sửa! Đã tự động khôi phục lại (rollback).\nChi tiết lỗi:\n${syntaxErr}\nHãy sửa lại code và thử lại.`;
+          }
+          
           onToolStatus('');
           return `Đã sửa xong file: ${path}`;
         } catch (e: any) {
@@ -173,6 +277,7 @@ export function createTools(
          }
          onToolStatus(`⚙️ Đang xóa: ${path}`);
          try {
+           backupPathObj(path);
            rmSync(path, { recursive: true, force: true });
            onToolStatus('');
            return `Đã xóa: ${path}`;

@@ -10,6 +10,7 @@ import { Settings } from './components/Settings';
 import { ChatInput } from './components/ChatInput';
 import { useChat } from './hooks/useChat';
 import { useFilePicker } from './hooks/useFilePicker';
+import { restoreLatestBackup } from './tools';
 
 loadEnv();
 
@@ -20,6 +21,7 @@ const HELP_TEXT =
   '  /model <id>      – đổi nhanh sang model theo id\n' +
   '  /key <api-key>   – đặt API key OpenRouter\n' +
   '  /settings        – mở bảng cài đặt (hoặc nhấn Ctrl+S)\n' +
+  '  /undo            – khôi phục file vừa sửa/xóa gần nhất\n' +
   '  exit             – thoát';
 
 type Mode = 'chat' | 'settings' | 'editKey' | 'picker';
@@ -37,7 +39,7 @@ const App = () => {
 
   const {
     items, addItem,
-    isLoading, streamTextState, toolStatus,
+    isLoading, streamTextState, toolStatus, activeTools,
     pendingApproval, setPendingApproval,
     submitChat, abort
   } = useChat(cfg);
@@ -88,11 +90,9 @@ const App = () => {
     (char, key) => {
       const c = char.toLowerCase();
       if (c === 'y') {
-        pendingApproval?.resolve(true);
-        setPendingApproval(null);
+        pendingApproval?.resolveAll(true);
       } else if (c === 'n' || key.escape) {
-        pendingApproval?.resolve(false);
-        setPendingApproval(null);
+        pendingApproval?.resolveAll(false);
       }
     },
     { isActive: !!pendingApproval }
@@ -180,6 +180,10 @@ const App = () => {
 
     if (text === 'exit' || text === '/exit' || text === '/quit') return exit();
     if (text === '/help') return addItem('system', HELP_TEXT);
+    if (text === '/undo') {
+      const result = restoreLatestBackup();
+      return addItem('system', result);
+    }
     if (text === '/settings') return setMode('settings');
     if (text === '/models') return void openPicker();
     if (text.startsWith('/key ')) {
@@ -214,7 +218,6 @@ const App = () => {
             🎩 Quản gia AI{' '}
             {isLoading && !pendingApproval && <Text color="yellow"><Spinner type="dots" /></Text>}
           </Text>
-          {toolStatus && <Text dimColor>{toolStatus}</Text>}
           <Text>{streamTextState}</Text>
         </Box>
       )}
@@ -224,15 +227,46 @@ const App = () => {
           <Text color="yellow">
             <Spinner type="dots" /> <Text italic>Quản gia đang suy nghĩ …</Text>
           </Text>
+        </Box>
+      )}
+
+      {activeTools && activeTools.length > 0 && (
+        <Box flexDirection="column" marginLeft={2} marginBottom={1}>
+          {activeTools.map((t) => (
+             <Box key={t.id} flexDirection="row">
+               <Text color={t.status === 'done' ? 'green' : 'yellow'}>
+                 {t.status === 'done' ? '✓ ' : '⏳ '} 
+               </Text>
+               <Text dimColor>
+                 {t.name}({JSON.stringify(t.args).slice(0, 60)}{JSON.stringify(t.args).length > 60 ? '...' : ''})
+               </Text>
+             </Box>
+          ))}
           {toolStatus && <Text dimColor>{toolStatus}</Text>}
         </Box>
       )}
 
       {pendingApproval && (
         <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginBottom={1}>
-          <Text bold color="yellow">⚠️ AI muốn: {pendingApproval.title}</Text>
-          <Text>{pendingApproval.detail}</Text>
-          <Text bold color="cyan">→ [Y] CHO PHÉP · [N] TỪ CHỐI</Text>
+          <Text bold color="yellow">⚠️ AI đề xuất {pendingApproval.items.length} hành động:</Text>
+          {pendingApproval.items.map((item, idx) => {
+            const isDiff = item.data?.type === 'diff';
+            return (
+              <Box key={idx} flexDirection="column" marginLeft={1} marginTop={1}>
+                <Text bold color="cyan">• {item.title}</Text>
+                {!isDiff && <Text dimColor>{item.detail}</Text>}
+                {isDiff && (
+                  <Box flexDirection="column" borderStyle="single" borderColor="gray" paddingX={1}>
+                     {item.data.searchBlock.split('\n').map((l: string, i: number) => <Text key={`o-${i}`} color="red">- {l}</Text>)}
+                     {item.data.replaceBlock.split('\n').map((l: string, i: number) => <Text key={`n-${i}`} color="green">+ {l}</Text>)}
+                  </Box>
+                )}
+              </Box>
+            );
+          })}
+          <Box marginTop={1}>
+             <Text bold color="cyan">→ [Y] PHÊ DUYỆT TẤT CẢ · [N] TỪ CHỐI</Text>
+          </Box>
         </Box>
       )}
 
