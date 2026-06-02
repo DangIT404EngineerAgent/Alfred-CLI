@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { tool } from 'ai';
 import { spawn } from 'child_process';
 import { readFileSync, writeFileSync, mkdirSync, rmSync, statSync, readdirSync, copyFileSync, cpSync, existsSync } from 'fs';
+import { readFile } from 'fs/promises';
 import { spawnSync } from 'child_process';
 import { join, basename } from 'path';
 import * as os from 'os';
@@ -129,7 +130,7 @@ export function createTools(
       execute: async ({ path }) => {
         onToolStatus(`⚙️ Đang đọc file: ${path}`);
         try {
-          const content = readFileSync(path, 'utf8');
+          const content = await readFile(path, 'utf8');
           const MAX_SIZE = 50 * 1024; // 50KB
           let result = content;
           if (content.length > MAX_SIZE) {
