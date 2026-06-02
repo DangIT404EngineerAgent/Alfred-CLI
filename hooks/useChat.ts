@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo, useCallback } from 'react';
 import { streamText, type CoreMessage } from 'ai';
 import { createOpenAI } from '@ai-sdk/openai';
-import { readFileSync } from 'fs';
+import { promises as fs } from 'fs';
 import { getEncoding } from 'js-tiktoken';
 import { type Item } from '../components/MessageView';
 import { createTools, type ApprovalRequest } from '../tools';
@@ -99,7 +99,7 @@ export function useChat(cfg: AppConfig) {
     for (const a of used) {
       if (!a.inline) continue;
       try {
-        let content = readFileSync(a.path, 'utf8');
+        let content = await fs.readFile(a.path, 'utf8');
         let warning = '';
         if (content.length > MAX_FILE_SIZE) {
           content = content.slice(0, MAX_FILE_SIZE);
@@ -147,7 +147,7 @@ export function useChat(cfg: AppConfig) {
     const ctxFiles = ['.quangiaairc', '.cursorrules', '.ai-instructions.md', 'CLAUDE.md'];
     for (const file of ctxFiles) {
        try {
-          const content = readFileSync(file, 'utf8');
+          const content = await fs.readFile(file, 'utf8');
           projectContext += `\n\n[Context từ ${file}]\n${content}`;
        } catch(e) {}
     }
