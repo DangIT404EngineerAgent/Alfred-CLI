@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { tool } from 'ai';
 import { spawn } from 'child_process';
-import { readFileSync, writeFileSync, mkdirSync, rmSync, statSync, readdirSync, copyFileSync, cpSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, statSync, readdirSync, copyFileSync, cpSync, existsSync, promises as fsPromises } from 'fs';
 import { spawnSync } from 'child_process';
 import { join, basename } from 'path';
 import * as os from 'os';
@@ -24,16 +24,16 @@ function validateProjectSyntax(): string | null {
 const BACKUP_DIR = join(os.homedir(), '.terminalai', 'backups');
 const BACKUP_MAP_PATH = join(BACKUP_DIR, 'latest_backup.json');
 
-function backupPathObj(targetPath: string) {
+async function backupPathObj(targetPath: string) {
   try {
-    if (!existsSync(BACKUP_DIR)) mkdirSync(BACKUP_DIR, { recursive: true });
+    if (!existsSync(BACKUP_DIR)) await fsPromises.mkdir(BACKUP_DIR, { recursive: true });
     if (existsSync(targetPath)) {
       const backupPath = join(BACKUP_DIR, `${Date.now()}_${basename(targetPath)}`);
-      cpSync(targetPath, backupPath, { recursive: true });
+      await fsPromises.cp(targetPath, backupPath, { recursive: true });
       let map: any = { stack: [] };
-      try { if (existsSync(BACKUP_MAP_PATH)) map = JSON.parse(readFileSync(BACKUP_MAP_PATH, 'utf8')); } catch(e) {}
+      try { if (existsSync(BACKUP_MAP_PATH)) map = JSON.parse(await fsPromises.readFile(BACKUP_MAP_PATH, 'utf8')); } catch(e) {}
       map.stack.push({ original: targetPath, backup: backupPath, timestamp: Date.now() });
-      writeFileSync(BACKUP_MAP_PATH, JSON.stringify(map), 'utf8');
+      await fsPromises.writeFile(BACKUP_MAP_PATH, JSON.stringify(map), 'utf8');
     }
   } catch(e) { console.error('Lỗi khi backup:', e); }
 }
@@ -159,19 +159,19 @@ export function createTools(
         onToolStatus(`⚙️ Đang ghi file: ${path}`);
         try {
           // Backup file trước khi ghi đè
-          backupPathObj(path);
+          await backupPathObj(path);
           
           // Lưu lại nội dung cũ để rollback nếu validation lỗi
           let oldContent: string | null = null;
-          try { oldContent = readFileSync(path, 'utf8'); } catch(e) {}
+          try { oldContent = await fsPromises.readFile(path, 'utf8'); } catch(e) {}
           
-          writeFileSync(path, content, 'utf8');
+          await fsPromises.writeFile(path, content, 'utf8');
           
           const syntaxErr = validateProjectSyntax();
           if (syntaxErr) {
              // Rollback
-             if (oldContent !== null) writeFileSync(path, oldContent, 'utf8');
-             else rmSync(path, { force: true });
+             if (oldContent !== null) await fsPromises.writeFile(path, oldContent, 'utf8');
+             else await fsPromises.rm(path, { force: true });
              onToolStatus('');
              return `Lỗi cú pháp sau khi ghi file! Đã tự động khôi phục lại (rollback).\nChi tiết lỗi:\n${syntaxErr}\nHãy sửa lại code và thử lại.`;
           }
@@ -201,9 +201,9 @@ export function createTools(
         onToolStatus(`⚙️ Đang sửa file: ${path}`);
         try {
           // Backup file trước khi sửa
-          backupPathObj(path);
+          await backupPathObj(path);
           
-          const content = readFileSync(path, 'utf8');
+          const content = await fsPromises.readFile(path, 'utf8');
           if (!content.includes(searchBlock)) {
             onToolStatus('');
             return `Lỗi: Không tìm thấy khối mã cũ trong file. Vui lòng đảm bảo searchBlock khớp chính xác từng ký tự và khoảng trắng.`;
@@ -211,12 +211,12 @@ export function createTools(
           const newContent = content.replace(searchBlock, replaceBlock);
           
           // Ghi file tạm để test
-          writeFileSync(path, newContent, 'utf8');
+          await fsPromises.writeFile(path, newContent, 'utf8');
           
           const syntaxErr = validateProjectSyntax();
           if (syntaxErr) {
              // Rollback
-             writeFileSync(path, content, 'utf8');
+             await fsPromises.writeFile(path, content, 'utf8');
              onToolStatus('');
              return `Lỗi cú pháp sau khi sửa! Đã tự động khôi phục lại (rollback).\nChi tiết lỗi:\n${syntaxErr}\nHãy sửa lại code và thử lại.`;
           }
@@ -277,8 +277,8 @@ export function createTools(
          }
          onToolStatus(`⚙️ Đang xóa: ${path}`);
          try {
-           backupPathObj(path);
-           rmSync(path, { recursive: true, force: true });
+         await backupPathObj(path);
+         await fsPromises.rm(path, { recursive: true, force: true });
            onToolStatus('');
            return `Đã xóa: ${path}`;
          } catch (e: any) {
