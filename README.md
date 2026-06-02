@@ -1,205 +1,119 @@
 # 🤖 Agentic Terminal AI (Quản gia AI)
 
-Trợ lý AI chạy ngay trên **Terminal**, giao diện viết bằng **React (Ink)**, có khả năng **tự chạy lệnh shell, đọc & ghi file** (agentic) thông qua **OpenRouter**. Cài đặt một lần là gõ lệnh `quangiaai` ở bất kỳ thư mục nào để dùng — giống như `claude` CLI.
+A modern, terminal-based AI assistant built with **React (Ink)**. It acts as an autonomous agent capable of **executing shell commands, reading, and modifying files** directly within your workspace via **OpenRouter**. Install once and use the `quangiaai` command anywhere — just like the `claude` CLI.
 
-> Đồ án tốt nghiệp · Mặc định dùng model miễn phí `moonshotai/kimi-k2.6:free` trên OpenRouter.
+> 🎓 Graduation Project · Defaults to the free `moonshotai/kimi-k2.6:free` model via OpenRouter.
 
----
-
-## ✨ Tính năng
-
-- 💬 **Chat streaming** — chữ chạy realtime từng từ.
-- 🎨 **Markdown + tô màu code** ngay trên terminal (`marked-terminal`).
-- 🛠️ **Agentic Tool Calling** — AI tự dùng công cụ để làm việc:
-  - `runShell` — chạy lệnh terminal
-  - `readFile` — đọc file
-  - `writeFile` — ghi/đè file
-- 🔒 **Hỏi Y/N trước khi chạy lệnh / ghi file** — Cậu duyệt từng hành động.
-- ⚙️ **Đổi API key & model thoải mái** — qua lệnh gạch chéo hoặc bảng cài đặt (Ctrl+S).
-- 🔎 **Chọn model live từ OpenRouter** — tải danh sách thật, gõ để lọc, ↑↓ chọn.
-- 🌍 **Lệnh toàn cục `quangiaai`** — chạy ở mọi thư mục; cấu hình nhớ chung tại `~/.terminalai`.
+*[Đọc bản Tiếng Việt tại đây](./README.vi.md)*
 
 ---
 
-## 🧱 Công nghệ
+## ✨ Features
 
-| Thành phần | Vai trò |
-|---|---|
-| [Ink](https://github.com/vadimdemedes/ink) | Render React xuống terminal |
-| [ink-text-input](https://github.com/vadimdemedes/ink-text-input) | Ô nhập liệu |
-| [Vercel AI SDK (`ai`)](https://sdk.vercel.ai) | Streaming + Tool Calling |
-| [`@ai-sdk/openai`](https://sdk.vercel.ai/providers/ai-sdk-providers/openai) | Provider tương thích OpenAI (trỏ về OpenRouter) |
-| [tsx](https://github.com/privatenumber/tsx) | Chạy TypeScript/TSX trực tiếp, không cần build |
-| [zod](https://zod.dev) | Định nghĩa schema tham số cho tool |
-| [marked](https://marked.js.org) + [marked-terminal](https://github.com/mikaelbr/marked-terminal) | Render Markdown ra ANSI |
-
----
-
-## 📋 Yêu cầu
-
-- **Node.js ≥ 18** (khuyến nghị 20+). Kiểm tra: `node -v`
-- Một **API key của [OpenRouter](https://openrouter.ai/keys)** (dạng `sk-or-v1-...`).
-- Terminal thật (cmd / PowerShell / Git Bash / Windows Terminal). *Không chạy được khi pipe vào nơi không phải terminal.*
+- 💬 **Real-time Chat Streaming** — Watch responses type out instantly.
+- 🎨 **Rich Terminal UI** — Full Markdown support with syntax highlighting (`marked-terminal`).
+- 🛠️ **Advanced Agentic Tooling** — The AI can autonomously use tools to accomplish tasks:
+  - `runShell` — Execute bash/powershell commands.
+  - `readFile` — Read file contents (with smart truncation for large files > 50KB).
+  - `writeFile` — Create or overwrite files.
+  - `replaceInFile` — Surgically replace specific text blocks in large files without rewriting everything.
+  - `searchProject` — Grep-like functionality to search for keywords across the entire codebase.
+- 🛡️ **Interactive Approvals (Y/N)** — AI must ask for permission before modifying files or running commands.
+- 📎 **Smart File Attachments (`@`)** — Type `@` to open an interactive file picker. Automatically respects `.gitignore` and ignores hidden/build directories.
+- 🧠 **Context Management** — Implements a Sliding Window (keeps the last 20 messages) to prevent Token Length Exceeded errors.
+- 🛑 **Graceful Interrupts** — Press `Ctrl+C` while the AI is streaming to safely abort the request without crashing the app.
+- ⚡ **Instant Startup** — Bundled via `tsup` into a single lightweight JavaScript file for blazing-fast execution.
+- 🌍 **Global CLI** — Access `quangiaai` from any directory. Configurations are saved globally in `~/.terminalai`.
 
 ---
 
-## 🚀 Cài đặt
+## 📋 Requirements
 
-### 1. Tải mã & cài thư viện
+- **Node.js ≥ 18** (20+ recommended). Check with: `node -v`
+- An **[OpenRouter API Key](https://openrouter.ai/keys)** (starts with `sk-or-v1-...`).
+- A true terminal environment (cmd / PowerShell / Git Bash / Windows Terminal).
+
+---
+
+## 🚀 Installation
+
+### 1. Clone & Install Dependencies
 ```bash
-cd D:\TerminalAI
+cd /path/to/TerminalAI
 npm install
 ```
 
-### 2. Cài lệnh toàn cục `quangiaai`
+### 2. Build the CLI
+```bash
+npm run build
+```
+
+### 3. Link Globally
 ```bash
 npm link
 ```
-Sau bước này, mở **terminal mới** ở bất kỳ đâu và gõ:
+Now, open a **new terminal** in any directory and type:
 ```bash
 quangiaai
 ```
 
-> 💡 Không muốn cài toàn cục? Chạy trực tiếp trong thư mục dự án bằng:
-> ```bash
-> npm start        # tương đương: npx tsx index.tsx
-> ```
+---
+
+## 🔑 API Key Configuration
+
+There are **3 ways** to set your API key (in order of priority):
+
+1. **In-App (Recommended):** Run `quangiaai` and either:
+   - Press **Ctrl+S** → `[K]` → paste key → Enter.
+   - Or type the command: `/key sk-or-v1-xxxxx`
+   - *(Saved globally to `~/.terminalai/config.json`)*
+2. **`.env` File** (Local project only): Copy `.env.example` to `.env` and fill it out.
+3. **System Environment Variables.**
 
 ---
 
-## 🔑 Cấu hình API Key
+## ⌨️ Usage
 
-Có **3 cách** đặt key (ưu tiên từ trên xuống):
+Simply type your questions or tasks. The AI will proactively use its tools if needed.
 
-1. **Trong app (khuyến nghị)** — chạy `quangiaai` rồi:
-   - Nhấn **Ctrl+S** → `[K]` → dán key → Enter, hoặc
-   - Gõ lệnh: `/key sk-or-v1-xxxxx`
-   - → Lưu vào `~/.terminalai/config.json`, nhớ vĩnh viễn cho mọi thư mục.
-
-2. **File `.env`** (chỉ áp dụng khi chạy trong thư mục dự án): copy `.env.example` → `.env` rồi điền:
-   ```env
-   OPENAI_API_KEY=sk-or-v1-xxxxx
-   OPENAI_BASE_URL=https://openrouter.ai/api/v1
-   MODEL_ID=moonshotai/kimi-k2.6:free
-   ```
-
-3. **Biến môi trường hệ thống** cùng tên như trên.
-
----
-
-## ⌨️ Cách sử dụng
-
-Gõ câu hỏi bình thường để chat. Ngoài ra có các **lệnh gạch chéo**:
-
-| Lệnh | Tác dụng |
+**Slash Commands:**
+| Command | Description |
 |---|---|
-| `/help` | Xem danh sách lệnh |
-| `/models` | Mở bảng chọn model (tải live từ OpenRouter) |
-| `/model <id>` | Đổi nhanh model theo id |
-| `/key <api-key>` | Đặt API key |
-| `/settings` | Mở bảng cài đặt |
-| `exit` | Thoát |
+| `/help` | Show command list |
+| `/models` | Open live OpenRouter model picker |
+| `/model <id>` | Quick switch to a specific model |
+| `/key <api-key>` | Set your API key |
+| `/settings` | Open settings panel |
+| `exit` | Quit the application |
 
-**Phím tắt:**
-- `Ctrl+S` — mở/đóng bảng cài đặt. Trong đó: `[M]` đổi model · `[K]` nhập key · `[Esc]` đóng.
-- `Ctrl+C` — thoát ngay.
+**Shortcuts:**
+- `Ctrl+S` — Open/close settings panel. (`[M]` change model · `[K]` enter key · `[Esc]` close).
+- `Ctrl+C` — Abort AI response or exit.
+- `@` — Type `@` to search and attach local files to your prompt.
 
-**Bảng chọn model** (`/models` hoặc Ctrl+S → M): gõ chữ để **lọc**, `↑`/`↓` để di chuyển, `Enter` để chọn, `Esc` để huỷ. 🆓 = model miễn phí.
-
-**Khi AI muốn chạy lệnh / ghi file:** sẽ hiện hộp ⚠️ vàng kèm nội dung. Nhấn:
-- `Y` → cho phép
-- `N` hoặc `Esc` → từ chối
-
-> Ví dụ thử: *"Đọc file package.json rồi liệt kê các script"* hoặc *"Chạy git status giúp tôi"*.
+> **Try it out:** *"Find where `handleSubmit` is declared using searchProject, then use replaceInFile to add a console.log at the top of it."*
 
 ---
 
-## 🗂️ Cấu trúc thư mục
+## 🧱 Tech Stack
 
-```
-TerminalAI/
-├── cli.mjs              # Điểm vào của lệnh toàn cục `quangiaai` (shebang + tsImport)
-├── index.tsx           # Toàn bộ app Ink: UI, chat, tool calling, cài đặt, picker
-├── config.ts           # Đọc/ghi cấu hình tại ~/.terminalai/config.json
-├── openrouter.ts       # Tải danh sách model live từ OpenRouter
-├── marked-terminal.d.ts# Khai báo kiểu cho thư viện marked-terminal
-├── package.json        # Thông tin gói, dependencies, trường "bin"
-├── tsconfig.json       # Cấu hình TypeScript (JSX + ESM)
-├── .env.example        # Mẫu biến môi trường (copy thành .env)
-├── .gitignore          # Bỏ qua node_modules, .env
-├── CLAUDE.md           # Quy tắc làm việc cho AI coding assistant
-└── README.md           # File này
-```
-
-**Cấu hình người dùng (tạo tự động, ngoài thư mục dự án):**
-```
-~/.terminalai/config.json   # { apiKey, baseURL, model } — KHÔNG commit, chứa key
-```
+- **[Ink](https://github.com/vadimdemedes/ink):** React for interactive CLI apps.
+- **[Vercel AI SDK](https://sdk.vercel.ai):** Streaming and Tool Calling orchestration.
+- **[tsup](https://tsup.egoist.dev/):** Lightning-fast TypeScript bundler.
+- **[ignore](https://www.npmjs.com/package/ignore):** `.gitignore` parser for smart file scanning.
+- **[ink-spinner](https://www.npmjs.com/package/ink-spinner):** Animated loading states.
 
 ---
 
-## 🔍 Kiến trúc & luồng hoạt động
+## 🩺 Troubleshooting
 
-```
-        ┌─────────────────────────── index.tsx (Ink App) ───────────────────────────┐
-Cậu gõ →│  TextInput → handleSubmit                                                  │
-        │     │                                                                       │
-        │     ├─ lệnh "/..."  → xử lý cục bộ (đổi key/model, mở settings/picker)      │
-        │     │                                                                       │
-        │     └─ chat thường  → streamText({ model, messages, tools, maxSteps })      │
-        │                          │                                                  │
-        │                          ├─ textStream → cập nhật UI realtime               │
-        │                          │                                                  │
-        │                          └─ AI gọi tool ──→ requestApproval() ──→ hộp Y/N   │
-        │                                              (runShell/readFile/writeFile)  │
-        └────────────────────────────────────────────────────────────────────────────┘
-              │ provider = createOpenAI({ apiKey, baseURL })   ← từ config.ts
-              ▼
-        OpenRouter  (https://openrouter.ai/api/v1)  ← danh sách model: openrouter.ts
-```
+- `⚠️ Error (429)`: Free models on OpenRouter are rate-limited. Wait a minute, switch to a different model (`/models`), or add credits to your account.
+- `quangiaai: command not found`: Re-run `npm link`. Ensure your npm global bin folder is in your system PATH.
+- `Raw mode is not supported`: You are running in a non-TTY environment (like a CI pipeline or pipe). Use a standard terminal.
 
-**Các điểm kỹ thuật đáng chú ý:**
-- **`<Static>` của Ink** render lịch sử một lần → cuộn mượt, không nhấp nháy khi chat dài.
-- **Cầu nối UI ↔ Tool:** tool gọi `requestApproval()` trả về `Promise`, UI bắt phím Y/N rồi `resolve` → đó là cách hỏi xác nhận an toàn ngay trong Ink.
-- **`maxSteps: 6`** cho phép AI gọi tool rồi tiếp tục suy luận tới câu trả lời cuối (vòng lặp agentic).
-- **Tin nhắn hệ thống** (help, lỗi, thông báo) được tách khỏi lịch sử gửi cho model → không làm "bẩn" ngữ cảnh.
-- **`cli.mjs` dùng `tsImport`** của tsx để chạy thẳng TSX, nên không cần bước build.
-
----
-
-## 🩺 Xử lý sự cố
-
-| Hiện tượng | Nguyên nhân & cách xử lý |
-|---|---|
-| `⚠️ Lỗi khi gọi API ... (429)` | Model `:free` đang bị giới hạn lượt phía OpenRouter. Thử lại sau ít phút, hoặc đổi sang model khác (`/models`), hoặc thêm key riêng tại [OpenRouter Integrations](https://openrouter.ai/settings/integrations). |
-| `Chưa có API key` | Đặt key bằng `/key ...` hoặc Ctrl+S → K. |
-| `quangiaai: command not found` | Chạy lại `npm link` trong thư mục dự án; đảm bảo thư mục bin global của npm nằm trên PATH. |
-| `Raw mode is not supported` | Đang chạy trong môi trường không phải terminal thật (vd pipe/CI). Hãy mở terminal thường. |
-| Đổi key/model không có tác dụng | Cấu hình lưu ở `~/.terminalai/config.json`; kiểm tra/sửa trực tiếp file đó nếu cần. |
-
----
-
-## 🧹 Gỡ cài đặt
+## 🧹 Uninstall
 
 ```bash
 npm unlink -g terminal-ai
 ```
-
-> Lệnh `quangiaai` trỏ tới thư mục dự án hiện tại. Nếu **di chuyển/xoá** thư mục, hãy `npm link` lại ở vị trí mới.
-
----
-
-## 📜 Lệnh hữu ích (dev)
-
-```bash
-npm start          # chạy app trong thư mục dự án
-npm run typecheck  # kiểm tra kiểu TypeScript (không build)
-```
-
----
-
-## ⚠️ Ghi chú bảo mật
-
-- `~/.terminalai/config.json` lưu API key dạng **văn bản thuần** — không chia sẻ/commit file này.
-- File `.env` và `config.json` đã được `.gitignore`.
-- AI luôn **hỏi Y/N** trước khi chạy lệnh hoặc ghi file — đọc kỹ nội dung trước khi bấm `Y`.
+*(If you move or delete the project folder, the global command will break until you `npm link` again).*
