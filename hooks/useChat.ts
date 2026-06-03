@@ -6,7 +6,10 @@ import { getEncoding } from 'js-tiktoken';
 import { type Item } from '../components/MessageView';
 import { createTools, type ApprovalRequest } from '../tools';
 import { type AppConfig } from '../config';
+import { type ModelCapabilities, DEFAULT_CAPABILITIES } from '../openrouter';
 import { logError } from '../utils/logger';
+
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp)$/i;
 
 export type PendingApprovalItem = { title: string; detail: string; data?: any; resolve: (ok: boolean) => void };
 export type PendingApprovalBatch = { items: PendingApprovalItem[]; resolveAll: (ok: boolean) => void };
@@ -19,7 +22,7 @@ export type ToolCallState = {
   result?: any;
 };
 
-export function useChat(cfg: AppConfig) {
+export function useChat(cfg: AppConfig, capabilities: ModelCapabilities = DEFAULT_CAPABILITIES) {
   const idRef = useRef(0);
   const nextId = () => ++idRef.current;
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -95,9 +98,26 @@ export function useChat(cfg: AppConfig) {
 
     const used = attachments.filter((a) => text.includes('@' + a.path));
     let inlineCtx = '';
+    const imageParts: { type: 'image'; image: Uint8Array }[] = [];
     const MAX_FILE_SIZE = 50 * 1024;
     for (const a of used) {
       if (!a.inline) continue;
+      // File ảnh: chỉ gửi dạng image part khi model hỗ trợ; nếu không thì cảnh báo,
+      // tuyệt đối không đọc nhị phân bằng utf8 (sẽ thành text rác gây nhiễu/lỗi).
+      if (IMAGE_EXT.test(a.path)) {
+        if (capabilities.supportsImage) {
+          try {
+            const buf = await fs.readFile(a.path);
+            imageParts.push({ type: 'image', image: new Uint8Array(buf) });
+          } catch (e: any) {
+            inlineCtx += `\n\n[Không đọc được ảnh ${a.path}: ${e.message}]`;
+            logError(e);
+          }
+        } else {
+          inlineCtx += `\n\n[CẢNH BÁO: Model "${cfg.model}" không hỗ trợ đọc ảnh — đã bỏ qua ${a.path}.]`;
+        }
+        continue;
+      }
       try {
         let content = await fs.readFile(a.path, 'utf8');
         let warning = '';
@@ -154,10 +174,13 @@ export function useChat(cfg: AppConfig) {
 
     // System prompt được giữ nguyên cấu trúc đầu tiên trong danh sách 
     // và thiết lập 'ephemeral' để tối ưu hóa Prompt Caching của Anthropic/OpenRouter
+    const toolsLine = capabilities.supportsTools
+      ? 'Bạn có các công cụ: runShell, readFile, writeFile, replaceInFile, searchProject, listDirectory, createDirectory, deleteFile, getFileMetadata. ' +
+        'Hãy chủ động dùng công cụ để hoàn thành việc Cậu chủ giao thay vì chỉ hướng dẫn suông. '
+      : 'Model hiện tại không hỗ trợ gọi công cụ (function calling); hãy trả lời trực tiếp bằng văn bản và hướng dẫn Cậu chủ các bước cần làm. ';
     const system =
       'Bạn là Quản gia AI, trợ lý đắc lực cho Cậu chủ Đăng - sinh viên IT năm cuối. ' +
-      'Bạn có các công cụ: runShell, readFile, writeFile, replaceInFile, searchProject, listDirectory, createDirectory, deleteFile, getFileMetadata. ' +
-      'Hãy chủ động dùng công cụ để hoàn thành việc Cậu chủ giao thay vì chỉ hướng dẫn suông. ' +
+      toolsLine +
       'Kiên trì làm tới khi xong trọn vẹn yêu cầu, không bỏ dở giữa chừng; nếu còn bước thì làm tiếp. ' +
       'Trả lời ngắn gọn, súc tích, dùng markdown cho code.' + projectContext;
 
@@ -168,9 +191,11 @@ export function useChat(cfg: AppConfig) {
         experimental_providerMetadata: { anthropic: { cacheControl: { type: 'ephemeral' } } }
       },
       ...contextMessages,
-      { 
-        role: 'user', 
-        content: aiText,
+      {
+        role: 'user',
+        content: imageParts.length > 0
+          ? [{ type: 'text', text: aiText }, ...imageParts]
+          : aiText,
         experimental_providerMetadata: { anthropic: { cacheControl: { type: 'ephemeral' } } }
       },
     ];
@@ -188,11 +213,11 @@ export function useChat(cfg: AppConfig) {
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
       
-      const result = streamText({ 
-        model: provider(modelId), 
-        messages: msgs, 
-        maxSteps: 25, 
-        tools, 
+      const result = streamText({
+        model: provider(modelId),
+        messages: msgs,
+        maxSteps: 25,
+        tools: capabilities.supportsTools ? tools : undefined,
         abortSignal: abortController.signal
       });
       

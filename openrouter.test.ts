@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fetchModels } from './openrouter';
+import { fetchModels, fetchModelCapabilities, DEFAULT_CAPABILITIES } from './openrouter';
 
 describe('fetchModels', () => {
   const originalFetch = global.fetch;
@@ -171,5 +171,99 @@ describe('fetchModels', () => {
       { id: 'a-paid', name: 'A Paid', free: false },
       { id: 'z-paid', name: 'Z Paid', free: false },
     ]);
+  });
+});
+
+describe('fetchModelCapabilities', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    global.fetch = vi.fn();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.clearAllMocks();
+  });
+
+  it('should throw an error if the response is not ok', async () => {
+    (global.fetch as any).mockResolvedValueOnce({ ok: false, status: 503 });
+    await expect(
+      fetchModelCapabilities('https://api.test.com', 'any/model')
+    ).rejects.toThrow('HTTP 503');
+  });
+
+  it('should parse modalities and tool support for a matching model', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            id: 'moonshotai/kimi-k2.6:free',
+            architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
+            supported_parameters: ['tools', 'tool_choice', 'reasoning'],
+          },
+        ],
+      }),
+    });
+
+    const caps = await fetchModelCapabilities('https://api.test.com/', 'moonshotai/kimi-k2.6:free');
+    expect(global.fetch).toHaveBeenCalledWith('https://api.test.com/models');
+    expect(caps).toEqual({
+      inputModalities: ['text', 'image'],
+      outputModalities: ['text'],
+      supportsTools: true,
+      supportsImage: true,
+    });
+  });
+
+  it('should report no tools / no image for a text-only model without tools', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            id: 'text/only',
+            architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+            supported_parameters: ['max_tokens', 'temperature'],
+          },
+        ],
+      }),
+    });
+
+    const caps = await fetchModelCapabilities('https://api.test.com', 'text/only');
+    expect(caps).toEqual({
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+      supportsTools: false,
+      supportsImage: false,
+    });
+  });
+
+  it('should fall back to defaults when the model is not in the list', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: [{ id: 'other/model' }] }),
+    });
+
+    const caps = await fetchModelCapabilities('https://api.test.com', 'missing/model');
+    expect(caps).toEqual(DEFAULT_CAPABILITIES);
+  });
+
+  it('should default modalities to text when architecture fields are missing', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [{ id: 'bare/model', supported_parameters: ['tools'] }],
+      }),
+    });
+
+    const caps = await fetchModelCapabilities('https://api.test.com', 'bare/model');
+    expect(caps).toEqual({
+      inputModalities: ['text'],
+      outputModalities: ['text'],
+      supportsTools: true,
+      supportsImage: false,
+    });
   });
 });

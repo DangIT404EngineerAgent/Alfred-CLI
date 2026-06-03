@@ -11,7 +11,12 @@
       "Bash(npm run *)",
       "Bash(node cli.mjs)",
       "Bash([ -d \"node_modules/$p\" ])",
-      "Bash(node -e \"console.log\\('node', process.version\\)\")"
+      "Bash(node -e \"console.log\\('node', process.version\\)\")",
+      "WebFetch(domain:openrouter.ai)",
+      "Bash(git stash *)",
+      "Bash(npm test *)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('version:', d.get\\('version'\\)\\); print\\('optionalDeps:', json.dumps\\(d.get\\('optionalDependencies',{}\\), indent=2\\)\\)\")",
+      "Bash(git checkout *)"
     ]
   }
 }

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
+import { type ModelCapabilities } from '../openrouter';
 
 type ChatInputProps = {
   input: string;
@@ -15,13 +16,19 @@ type ChatInputProps = {
   atCursor: number;
   attachments: { path: string; inline: boolean }[];
   model: string;
+  capabilities: ModelCapabilities;
 };
 
 export function ChatInput({
   input, handleInputChange, handleSubmit,
   atActive, isScanning, atQuery, atFiltered, atWindowed, atStart, atCursor,
-  attachments, model
+  attachments, model, capabilities
 }: ChatInputProps) {
+  const caps = [
+    '📝 text',
+    capabilities.supportsImage ? '🖼️ image' : null,
+    capabilities.supportsTools ? '🔧 tools' : null,
+  ].filter(Boolean).join(' · ');
   return (
     <Box flexDirection="column">
       <Text color="blue" bold>👨‍💻 Cậu chủ</Text>
@@ -64,7 +71,8 @@ export function ChatInput({
         </Text>
       )}
 
-      <Text dimColor>Model: {model}  ·  @ gắn file · /help · /models · Ctrl+S cài đặt</Text>
+      <Text dimColor>Model: {model}  ·  {caps}</Text>
+      <Text dimColor>@ gắn file · /help · /models · Ctrl+S cài đặt</Text>
     </Box>
   );
 }

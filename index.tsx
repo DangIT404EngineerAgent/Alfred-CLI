@@ -1,8 +1,14 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { render, Text, Box, useApp, useInput, Static } from 'ink';
 import { config as loadEnv } from 'dotenv';
 import { loadConfig, saveConfig, type AppConfig } from './config';
-import { fetchModels, type ModelInfo } from './openrouter';
+import {
+  fetchModels,
+  fetchModelCapabilities,
+  DEFAULT_CAPABILITIES,
+  type ModelInfo,
+  type ModelCapabilities,
+} from './openrouter';
 
 import Spinner from 'ink-spinner';
 import { MessageView } from './components/MessageView';
@@ -31,6 +37,17 @@ const App = ({ initialConfig }: { initialConfig: AppConfig }) => {
   const [cfg, setCfg] = useState<AppConfig>(initialConfig);
   const [mode, setMode] = useState<Mode>('chat');
   const [keyDraft, setKeyDraft] = useState('');
+  const [capabilities, setCapabilities] = useState<ModelCapabilities>(DEFAULT_CAPABILITIES);
+
+  // Tải capability (modalities + tools) của model hiện tại để tối ưu request.
+  // Lỗi mạng → giữ mặc định an toàn (tools bật, ảnh tắt) để không phá luồng chat.
+  useEffect(() => {
+    let cancelled = false;
+    fetchModelCapabilities(cfg.baseURL, cfg.model)
+      .then((caps) => { if (!cancelled) setCapabilities(caps); })
+      .catch(() => { if (!cancelled) setCapabilities(DEFAULT_CAPABILITIES); });
+    return () => { cancelled = true; };
+  }, [cfg.baseURL, cfg.model]);
 
   const applyCfg = async (next: AppConfig) => {
     setCfg(next);
@@ -42,7 +59,7 @@ const App = ({ initialConfig }: { initialConfig: AppConfig }) => {
     isLoading, streamTextState, toolStatus, activeTools,
     pendingApproval, setPendingApproval,
     submitChat, abort
-  } = useChat(cfg);
+  } = useChat(cfg, capabilities);
 
   const {
     input, setInput, handleInputChange,
@@ -315,6 +332,7 @@ const App = ({ initialConfig }: { initialConfig: AppConfig }) => {
           atCursor={atCursor}
           attachments={attachments}
           model={cfg.model}
+          capabilities={capabilities}
         />
       )}
     </Box>
