@@ -26,15 +26,15 @@ const HELP_TEXT =
 
 type Mode = 'chat' | 'settings' | 'editKey' | 'picker';
 
-const App = () => {
+const App = ({ initialConfig }: { initialConfig: AppConfig }) => {
   const { exit } = useApp();
-  const [cfg, setCfg] = useState<AppConfig>(() => loadConfig());
+  const [cfg, setCfg] = useState<AppConfig>(initialConfig);
   const [mode, setMode] = useState<Mode>('chat');
   const [keyDraft, setKeyDraft] = useState('');
 
-  const applyCfg = (next: AppConfig) => {
+  const applyCfg = async (next: AppConfig) => {
     setCfg(next);
-    saveConfig(next);
+    await saveConfig(next);
   };
 
   const {
@@ -321,5 +321,10 @@ const App = () => {
   );
 };
 
-console.log('🤖 Agentic Terminal — Dành riêng cho Cậu chủ Đăng\n');
-render(<App />);
+async function main() {
+  console.log('🤖 Agentic Terminal — Dành riêng cho Cậu chủ Đăng\n');
+  const initialConfig = await loadConfig();
+  render(<App initialConfig={initialConfig} />);
+}
+
+main();
