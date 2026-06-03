@@ -58,4 +58,118 @@ describe('fetchModels', () => {
     const models = await fetchModels('https://api.test.com');
     expect(models).toEqual([]);
   });
+
+  it('should handle missing prompt price but match :free in id', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [{ id: 'model:free', name: 'Free Model', pricing: {} }]
+      }),
+    });
+
+    const models = await fetchModels('https://api.test.com');
+    expect(models).toEqual([
+      { id: 'model:free', name: 'Free Model', free: true },
+    ]);
+  });
+
+  it('should handle equal free status and exact same id gracefully', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'same-model', name: 'Model A' },
+          { id: 'same-model', name: 'Model B' },
+        ]
+      }),
+    });
+
+    const models = await fetchModels('https://api.test.com');
+    expect(models).toEqual([
+      { id: 'same-model', name: 'Model A', free: false },
+      { id: 'same-model', name: 'Model B', free: false },
+    ]);
+  });
+
+  it('should handle opposite sorting scenario: b.free and not a.free', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'model-b', name: 'Model B', pricing: { prompt: '0.1' } },
+          { id: 'model-a:free', name: 'Model A' },
+        ]
+      }),
+    });
+
+    const models = await fetchModels('https://api.test.com');
+    expect(models).toEqual([
+      { id: 'model-a:free', name: 'Model A', free: true },
+      { id: 'model-b', name: 'Model B', free: false },
+    ]);
+  });
+
+  it('should handle reverse sorting order where a non-free model is compared to a free model', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'model-a:free', name: 'Model A' },
+          { id: 'model-b', name: 'Model B', pricing: { prompt: '0.1' } },
+        ]
+      }),
+    });
+
+    const models = await fetchModels('https://api.test.com');
+    expect(models).toEqual([
+      { id: 'model-a:free', name: 'Model A', free: true },
+      { id: 'model-b', name: 'Model B', free: false },
+    ]);
+  });
+
+  it('should handle cases where json.data is absent', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({}),
+    });
+
+    const models = await fetchModels('https://api.test.com');
+    expect(models).toEqual([]);
+  });
+
+  it('should default name to id if name is missing', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [{ id: 'model-no-name' }]
+      }),
+    });
+
+    const models = await fetchModels('https://api.test.com');
+    expect(models).toEqual([
+      { id: 'model-no-name', name: 'model-no-name', free: false },
+    ]);
+  });
+
+  it('should correctly sort models: free models first, then non-free, alphabetically by id', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'z-paid', name: 'Z Paid', pricing: { prompt: '0.1' } },
+          { id: 'a-paid', name: 'A Paid', pricing: { prompt: '0.1' } },
+          { id: 'z-free:free', name: 'Z Free' },
+          { id: 'a-free:free', name: 'A Free' },
+        ]
+      }),
+    });
+
+    const models = await fetchModels('https://api.test.com');
+    expect(models).toEqual([
+      { id: 'a-free:free', name: 'A Free', free: true },
+      { id: 'z-free:free', name: 'Z Free', free: true },
+      { id: 'a-paid', name: 'A Paid', free: false },
+      { id: 'z-paid', name: 'Z Paid', free: false },
+    ]);
+  });
 });
