@@ -181,7 +181,7 @@ const App = () => {
     if (text === 'exit' || text === '/exit' || text === '/quit') return exit();
     if (text === '/help') return addItem('system', HELP_TEXT);
     if (text === '/undo') {
-      const result = restoreLatestBackup();
+      const result = await restoreLatestBackup();
       return addItem('system', result);
     }
     if (text === '/settings') return setMode('settings');
