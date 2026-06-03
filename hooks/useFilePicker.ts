@@ -22,15 +22,17 @@ export function useFilePicker(mode: string, isLoading: boolean, hasPendingApprov
     [allFiles, atQuery, atActive]
   );
 
-  const handleInputChange = (val: string) => {
+  const handleInputChange = async (val: string) => {
     setInput(val);
     setAtCursor(0);
     if (AT_RE.test(val) && allFiles.length === 0 && !isScanning) {
       setIsScanning(true);
-      scanFiles(process.cwd()).then((files) => {
+      try {
+        const files = await scanFiles(process.cwd());
         setAllFiles(files);
+      } finally {
         setIsScanning(false);
-      });
+      }
     }
   };
 
