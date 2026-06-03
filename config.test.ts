@@ -5,12 +5,11 @@ import path from 'path';
 
 // Mock the modules BEFORE importing the config module
 // so that when config.ts is imported and its top level code runs, it uses the mocked homedir.
-vi.mock('fs', () => {
+vi.mock('fs/promises', () => {
   const m = {
-    mkdirSync: vi.fn(),
-    writeFileSync: vi.fn(),
-    readFileSync: vi.fn(),
-    existsSync: vi.fn()
+    mkdir: vi.fn(),
+    writeFile: vi.fn(),
+    readFile: vi.fn(),
   };
   return {
     ...m,
@@ -29,6 +28,7 @@ vi.mock('os', () => {
 });
 
 // Import after mocking
+import { readFile, mkdir, writeFile } from 'fs/promises';
 import { loadConfig, saveConfig, AppConfig } from './config';
 
 describe('config', () => {
@@ -43,10 +43,10 @@ describe('config', () => {
   });
 
   describe('loadConfig', () => {
-    it('should return default config if file does not exist and no env vars', () => {
-      vi.mocked(fs.existsSync).mockReturnValue(false);
+    it('should return default config if file does not exist and no env vars', async () => {
+      vi.mocked(readFile).mockRejectedValue(new Error('ENOENT'));
 
-      const config = loadConfig();
+      const config = await loadConfig();
 
       expect(config).toEqual({
         apiKey: '',
@@ -55,15 +55,14 @@ describe('config', () => {
       });
     });
 
-    it('should load config from file if it exists', () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+    it('should load config from file if it exists', async () => {
+      vi.mocked(readFile).mockResolvedValue(JSON.stringify({
         apiKey: 'file-key',
         baseURL: 'https://file.url',
         model: 'file-model',
       }));
 
-      const config = loadConfig();
+      const config = await loadConfig();
 
       expect(config).toEqual({
         apiKey: 'file-key',
@@ -72,9 +71,8 @@ describe('config', () => {
       });
     });
 
-    it('should fallback to env vars if file values are missing', () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+    it('should fallback to env vars if file values are missing', async () => {
+      vi.mocked(readFile).mockResolvedValue(JSON.stringify({
         // missing values
       }));
 
@@ -82,7 +80,7 @@ describe('config', () => {
       process.env.OPENAI_BASE_URL = 'https://env.url';
       process.env.MODEL_ID = 'env-model';
 
-      const config = loadConfig();
+      const config = await loadConfig();
 
       expect(config).toEqual({
         apiKey: 'env-key',
@@ -91,15 +89,14 @@ describe('config', () => {
       });
     });
 
-    it('should fallback to env vars and defaults if file contains invalid JSON', () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockImplementation(() => {
+    it('should fallback to env vars and defaults if file contains invalid JSON', async () => {
+      vi.mocked(readFile).mockImplementation(() => {
         throw new Error('Invalid JSON');
       });
 
       process.env.OPENAI_API_KEY = 'env-key';
 
-      const config = loadConfig();
+      const config = await loadConfig();
 
       expect(config).toEqual({
         apiKey: 'env-key',
@@ -108,9 +105,8 @@ describe('config', () => {
       });
     });
 
-    it('should prioritize file config over env vars', () => {
-      vi.mocked(fs.existsSync).mockReturnValue(true);
-      vi.mocked(fs.readFileSync).mockReturnValue(JSON.stringify({
+    it('should prioritize file config over env vars', async () => {
+      vi.mocked(readFile).mockResolvedValue(JSON.stringify({
         apiKey: 'file-key',
         baseURL: 'https://file.url',
       }));
@@ -119,7 +115,7 @@ describe('config', () => {
       process.env.OPENAI_BASE_URL = 'https://env.url';
       process.env.MODEL_ID = 'env-model';
 
-      const config = loadConfig();
+      const config = await loadConfig();
 
       expect(config).toEqual({
         apiKey: 'file-key',
@@ -130,20 +126,20 @@ describe('config', () => {
   });
 
   describe('saveConfig', () => {
-    it('should create the config directory recursively and save the config file', () => {
+    it('should create the config directory recursively and save the config file', async () => {
       const mockConfig: AppConfig = {
         apiKey: 'test-key',
         baseURL: 'https://test.url',
         model: 'test-model',
       };
 
-      saveConfig(mockConfig);
+      await saveConfig(mockConfig);
 
       const expectedConfigDir = path.join('/mocked/home/dir', '.terminalai');
       const expectedConfigPath = path.join(expectedConfigDir, 'config.json');
 
-      expect(fs.mkdirSync).toHaveBeenCalledWith(expectedConfigDir, { recursive: true });
-      expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect(mkdir).toHaveBeenCalledWith(expectedConfigDir, { recursive: true });
+      expect(writeFile).toHaveBeenCalledWith(
         expectedConfigPath,
         JSON.stringify(mockConfig, null, 2),
         'utf8'
