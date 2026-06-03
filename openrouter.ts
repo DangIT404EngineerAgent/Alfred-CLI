@@ -10,6 +10,7 @@ export type ModelCapabilities = {
   outputModalities: string[];  // ví dụ ['text']
   supportsTools: boolean;      // có function calling không
   supportsImage: boolean;      // có nhận ảnh đầu vào không
+  supportsReasoning: boolean;  // có trả chuỗi suy luận (reasoning tokens) không
 };
 
 // Mặc định an toàn khi chưa/không lấy được capability: giữ hành vi agentic (tools bật),
@@ -19,6 +20,7 @@ export const DEFAULT_CAPABILITIES: ModelCapabilities = {
   outputModalities: ['text'],
   supportsTools: true,
   supportsImage: false,
+  supportsReasoning: false,
 };
 
 // Lấy danh sách model trực tiếp từ OpenRouter (endpoint /models không cần API key).
@@ -58,5 +60,6 @@ export async function fetchModelCapabilities(
     outputModalities,
     supportsTools: params.includes('tools'),
     supportsImage: inputModalities.includes('image'),
+    supportsReasoning: params.includes('reasoning') || params.includes('include_reasoning'),
   };
 }

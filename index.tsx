@@ -57,6 +57,7 @@ const App = ({ initialConfig }: { initialConfig: AppConfig }) => {
   const {
     items, addItem,
     isLoading, streamTextState, toolStatus, activeTools,
+    reasoningState, stepState,
     pendingApproval, setPendingApproval,
     submitChat, abort
   } = useChat(cfg, capabilities);
@@ -225,9 +226,24 @@ const App = ({ initialConfig }: { initialConfig: AppConfig }) => {
   const atStart = Math.max(0, Math.min(atCursor - Math.floor(AT_WINDOW / 2), Math.max(0, atFiltered.length - AT_WINDOW)));
   const atWindowed = atFiltered.slice(atStart, atStart + AT_WINDOW);
 
+  const reasoningView = reasoningState.length > 1200 ? '…' + reasoningState.slice(-1200) : reasoningState;
+
   return (
     <Box flexDirection="column">
       <Static items={items}>{(item) => <MessageView key={item.id} item={item} />}</Static>
+
+      {isLoading && !pendingApproval && (stepState || reasoningState) && (
+        <Box flexDirection="column" marginBottom={1}>
+          <Text color="cyan">
+            <Spinner type="dots" /> <Text italic>{stepState || 'Đang suy nghĩ…'}</Text>
+          </Text>
+          {reasoningState && (
+            <Box marginLeft={2}>
+              <Text dimColor italic>💭 {reasoningView}</Text>
+            </Box>
+          )}
+        </Box>
+      )}
 
       {streamTextState && (
         <Box flexDirection="column" marginBottom={1}>
@@ -239,7 +255,7 @@ const App = ({ initialConfig }: { initialConfig: AppConfig }) => {
         </Box>
       )}
 
-      {isLoading && !streamTextState && !pendingApproval && (
+      {isLoading && !streamTextState && !reasoningState && !stepState && !pendingApproval && (
         <Box flexDirection="column">
           <Text color="yellow">
             <Spinner type="dots" /> <Text italic>Quản gia đang suy nghĩ …</Text>

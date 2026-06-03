@@ -16,7 +16,15 @@
       "Bash(git stash *)",
       "Bash(npm test *)",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('version:', d.get\\('version'\\)\\); print\\('optionalDeps:', json.dumps\\(d.get\\('optionalDependencies',{}\\), indent=2\\)\\)\")",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(node -e \"const p=require\\('./package.json'\\); console.log\\('ai:', p.dependencies.ai, '| @ai-sdk/openai:', p.dependencies['@ai-sdk/openai']\\);\")",
+      "Bash(node -e \"console.log\\('ai', require\\('ai/package.json'\\).version\\); console.log\\('@ai-sdk/openai', require\\('@ai-sdk/openai/package.json'\\).version\\);\")",
+      "Bash(awk -F: '$1>700 && $1<900')",
+      "Bash(npm view *)",
+      "Bash(python -c \"import sys,json; v=json.load\\(sys.stdin\\); print\\(v[-12:]\\)\")",
+      "Bash(sed -n '2820,2828p' node_modules/ai/dist/index.d.ts)",
+      "Bash(sed -n '2848,2860p' node_modules/ai/dist/index.d.ts)",
+      "Bash(node -e \"const d=require\\('./package.json'\\).dependencies; console.log\\('@openrouter/ai-sdk-provider:', d['@openrouter/ai-sdk-provider']\\); console.log\\('@ai-sdk/openai:', d['@ai-sdk/openai']\\);\")"
     ]
   }
 }

@@ -33,7 +33,10 @@
   - **Gate tools**: chỉ gửi `tools` khi model có `"tools"` trong `supported_parameters` → tránh lỗi *"No endpoints found that support tool use"* với model không hỗ trợ function calling. System prompt cũng đổi theo (không "khoe" công cụ khi model không hỗ trợ).
   - **Ảnh đúng định dạng**: đính kèm file ảnh (`.png/.jpg/.jpeg/.gif/.webp/.bmp`) → gửi dạng **image part** nếu model nhận ảnh; nếu không → cảnh báo & bỏ qua, **không** đọc nhị phân bằng `utf8` (tránh text rác). File text vẫn nhúng utf8 như cũ.
   - **UI**: dòng trạng thái dưới ô nhập hiện badge khả năng (`📝 text · 🖼️ image · 🔧 tools`).
-  - Lấy bằng `fetchModelCapabilities(baseURL, modelId)` (openrouter.ts); fetch lỗi/model lạ → `DEFAULT_CAPABILITIES` (tools **bật**, ảnh **tắt**) để giữ hành vi agentic. Model dự phòng khi 429 vẫn dùng cờ tools của model gốc.
+  - Lấy bằng `fetchModelCapabilities(baseURL, modelId)` (openrouter.ts); fetch lỗi/model lạ → `DEFAULT_CAPABILITIES` (tools **bật**, ảnh **tắt**, reasoning **tắt**) để giữ hành vi agentic. Model dự phòng khi 429 vẫn dùng cờ tools của model gốc.
+- ✅ **Hiển thị suy nghĩ từng bước (live)** — thay spinner "đang suy nghĩ…" chung bằng panel realtime:
+  - **Reasoning thật**: nếu model hỗ trợ (`supported_parameters` có `reasoning`/`include_reasoning` → `capabilities.supportsReasoning`), bật reasoning qua provider OpenRouter và stream chunk `reasoning` của `fullStream` vào panel `💭` (dim, cắt còn ~1200 ký tự cuối). Reasoning **không** lưu vào lịch sử (tránh phình token).
+  - **Timeline các bước**: từ `fullStream` (`step-start` → "Bước N", `tool-call` → "Đang gọi công cụ X", `text-delta` → "Đang soạn câu trả lời") + danh sách tool ✓/⏳ sẵn có. State mới ở `useChat`: `reasoningState`, `stepState` (reset đầu & cuối lượt).
 - ✅ **Modular hóa** — tách `index.tsx` thành `components/`, `hooks/`, `tools/`, `utils/`.
 - ✅ **CLI toàn cục** — lệnh **`quangiaai`**; build bằng **tsup** → `dist/cli.js`; cấu hình lưu ở `~/.terminalai/config.json`.
 - ✅ **Test (vitest)** — `config.test.ts`, `openrouter.test.ts`.
@@ -43,8 +46,8 @@
 
 ## 3. Stack & quyết định kỹ thuật QUAN TRỌNG (đừng vô tình phá)
 
-- **Vercel AI SDK PIN bản v4** (`ai@^4`, `@ai-sdk/openai@^1`). KHÔNG nâng lên v5 — v5 đổi API (`CoreMessage`→`ModelMessage`, provider mặc định dùng Responses API mà OpenRouter không hỗ trợ).
-- **Provider:** `createOpenAI({ apiKey, baseURL, compatibility: 'compatible' })` rồi `provider(modelId)`. Dùng `compatibility:'compatible'` cho provider bên thứ ba.
+- **Vercel AI SDK PIN bản v4** (`ai@^4`). KHÔNG nâng lên v5 — v5 đổi API (`CoreMessage`→`ModelMessage`, `LanguageModelV1`→`V2`, provider mặc định dùng Responses API mà OpenRouter không hỗ trợ).
+- **Provider:** `@openrouter/ai-sdk-provider@0.7.3` (peer `ai@^4.3.17`): `createOpenRouter({ apiKey, baseURL })` rồi `provider(modelId, settings?)`. **Lý do đổi từ `@ai-sdk/openai`:** nhánh Chat Completions của `@ai-sdk/openai` chỉ đọc `delta.content`, **bỏ qua `delta.reasoning`** → không lấy được chuỗi suy luận; provider OpenRouter bắn ra chunk `reasoning` trong `fullStream`. Bật bằng `provider(modelId, { reasoning: { effort: 'low' } })` — CHỈ bật cho model gốc hỗ trợ reasoning (model dự phòng 429 không bật để tránh lỗi). ⚠️ `@ai-sdk/openai` còn trong `package.json` nhưng **không còn dùng** (có thể gỡ).
 - **Ink v5 + React 18 + ink-text-input v6 + ink-spinner v5** (tương thích nhau).
 - **tsx** chạy TSX trực tiếp khi dev (`npm start`, không cần build). **tsup** dùng để **build** ra `dist/cli.js` cho lệnh global. `tsx` nằm ở **devDependencies**; bản build (`dist/cli.js`) đã bundle nên `npm install -g` chạy được mà không cần tsx.
 - **`cli.ts`** = entry của lệnh global: shebang `#!/usr/bin/env node` + `import './index.tsx'`. `package.json#bin.quangiaai` trỏ tới **`./dist/cli.js`** (đã build).
@@ -68,9 +71,10 @@ TerminalAI/
 │   ├── ChatInput.tsx    # ô nhập + popup gắn file @ + dòng trạng thái model
 │   └── Settings.tsx      # bảng cài đặt (Ctrl+S) + form nhập API key
 ├── hooks/
-│   ├── useChat.ts       # LÕI: streamText, tools, retry/backoff, fallback 429, batch approval,
-│   │                    #      token budgeting, prompt caching, system prompt (persona);
-│   │                    #      nhận ModelCapabilities → gate tools + gửi ảnh theo khả năng model
+│   ├── useChat.ts       # LÕI: streamText (provider OpenRouter), tools, retry/backoff, fallback 429,
+│   │                    #      batch approval, token budgeting, prompt caching, system prompt (persona);
+│   │                    #      nhận ModelCapabilities → gate tools + gửi ảnh + bật reasoning theo model;
+│   │                    #      stream reasoning/step ra reasoningState & stepState (hiển thị suy nghĩ live)
 │   └── useFilePicker.ts # logic gõ '@' để gắn file (scan, lọc, chọn inline/thẻ)
 ├── tools/
 │   └── index.ts         # createTools(...) = 9 tool; backup/restore (/undo); validate+rollback

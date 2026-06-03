@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo, useCallback } from 'react';
 import { streamText, type CoreMessage } from 'ai';
-import { createOpenAI } from '@ai-sdk/openai';
+import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { promises as fs } from 'fs';
 import { getEncoding } from 'js-tiktoken';
 import { type Item } from '../components/MessageView';
@@ -35,6 +35,8 @@ export function useChat(cfg: AppConfig, capabilities: ModelCapabilities = DEFAUL
   const [toolStatus, setToolStatus] = useState('');
   const [pendingApproval, setPendingApproval] = useState<PendingApprovalBatch | null>(null);
   const [activeTools, setActiveTools] = useState<ToolCallState[]>([]);
+  const [reasoningState, setReasoningState] = useState('');
+  const [stepState, setStepState] = useState('');
 
   const approvalQueueRef = useRef<PendingApprovalItem[]>([]);
   const batchTimeoutRef = useRef<any>(null);
@@ -43,7 +45,7 @@ export function useChat(cfg: AppConfig, capabilities: ModelCapabilities = DEFAUL
     setItems((xs) => [...xs, { id: nextId(), role, content, attachments }]);
 
   const provider = useMemo(
-    () => createOpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL, compatibility: 'compatible' }),
+    () => createOpenRouter({ apiKey: cfg.apiKey, baseURL: cfg.baseURL }),
     [cfg.apiKey, cfg.baseURL]
   );
 
@@ -204,6 +206,8 @@ export function useChat(cfg: AppConfig, capabilities: ModelCapabilities = DEFAUL
     clearAttachments();
     setIsLoading(true);
     setStreamTextState('');
+    setReasoningState('');
+    setStepState('');
 
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
     const MAX_RETRIES = 4;
@@ -212,22 +216,37 @@ export function useChat(cfg: AppConfig, capabilities: ModelCapabilities = DEFAUL
     const callOnce = async (msgs: CoreMessage[], prefix: string, modelId: string) => {
       const abortController = new AbortController();
       abortControllerRef.current = abortController;
-      
+
+      // Chỉ bật reasoning cho đúng model gốc đang hỗ trợ; model dự phòng (429) bỏ qua
+      // để tránh lỗi với model không hỗ trợ reasoning.
+      const enableReasoning = capabilities.supportsReasoning && modelId === cfg.model;
       const result = streamText({
-        model: provider(modelId),
+        model: enableReasoning
+          ? provider(modelId, { reasoning: { effort: 'low' } })
+          : provider(modelId),
         messages: msgs,
         maxSteps: 25,
         tools: capabilities.supportsTools ? tools : undefined,
         abortSignal: abortController.signal
       });
-      
+
       let full = '';
+      let reasoning = '';
+      let step = 0;
       try {
         for await (const chunk of result.fullStream) {
           if (chunk.type === 'text-delta') {
             full += chunk.textDelta;
             setStreamTextState(prefix + full);
+            setStepState('Đang soạn câu trả lời…');
+          } else if (chunk.type === 'reasoning') {
+            reasoning += chunk.textDelta;
+            setReasoningState(reasoning);
+          } else if (chunk.type === 'step-start') {
+            step++;
+            setStepState(`Bước ${step} — đang suy nghĩ…`);
           } else if (chunk.type === 'tool-call') {
+            setStepState(`Đang gọi công cụ: ${chunk.toolName}…`);
             setActiveTools((prev) => [...prev, {
               id: chunk.toolCallId,
               name: chunk.toolName,
@@ -235,8 +254,8 @@ export function useChat(cfg: AppConfig, capabilities: ModelCapabilities = DEFAUL
               status: 'running'
             }]);
           } else if (chunk.type === 'tool-result') {
-            setActiveTools((prev) => prev.map(t => 
-              t.id === chunk.toolCallId 
+            setActiveTools((prev) => prev.map(t =>
+              t.id === chunk.toolCallId
                 ? { ...t, status: 'done', result: chunk.result }
                 : t
             ));
@@ -329,12 +348,15 @@ export function useChat(cfg: AppConfig, capabilities: ModelCapabilities = DEFAUL
       setStreamTextState('');
       setToolStatus('');
       setActiveTools([]);
+      setReasoningState('');
+      setStepState('');
     }
   };
 
   return {
     items, addItem,
     isLoading, streamTextState, toolStatus, activeTools,
+    reasoningState, stepState,
     pendingApproval, setPendingApproval,
     submitChat, abort
   };

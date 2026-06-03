@@ -214,6 +214,7 @@ describe('fetchModelCapabilities', () => {
       outputModalities: ['text'],
       supportsTools: true,
       supportsImage: true,
+      supportsReasoning: true,
     });
   });
 
@@ -237,6 +238,7 @@ describe('fetchModelCapabilities', () => {
       outputModalities: ['text'],
       supportsTools: false,
       supportsImage: false,
+      supportsReasoning: false,
     });
   });
 
@@ -264,6 +266,19 @@ describe('fetchModelCapabilities', () => {
       outputModalities: ['text'],
       supportsTools: true,
       supportsImage: false,
+      supportsReasoning: false,
     });
+  });
+
+  it('should detect reasoning via include_reasoning parameter', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        data: [{ id: 'reason/model', supported_parameters: ['include_reasoning'] }],
+      }),
+    });
+
+    const caps = await fetchModelCapabilities('https://api.test.com', 'reason/model');
+    expect(caps.supportsReasoning).toBe(true);
   });
 });
