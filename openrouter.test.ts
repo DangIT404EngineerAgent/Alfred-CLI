@@ -29,6 +29,8 @@ describe('fetchModels', () => {
         { id: 'model-b:free', name: 'Model B', pricing: { prompt: '0' } },
         { id: 'model-c', name: 'Model C', pricing: { prompt: '0.0' } },
         { id: 'model-d:free', name: 'Model D' },
+        { id: 'model-e', pricing: { prompt: '0.2' } }, // no name, fallback to id
+        { id: 'model-f', name: 'Model F', pricing: { prompt: '0.3' } }, // for sorting comparison with model-a and model-e
       ]
     };
 
@@ -46,7 +48,19 @@ describe('fetchModels', () => {
       { id: 'model-c', name: 'Model C', free: true },
       { id: 'model-d:free', name: 'Model D', free: true },
       { id: 'model-a', name: 'Model A', free: false },
+      { id: 'model-e', name: 'model-e', free: false },
+      { id: 'model-f', name: 'Model F', free: false },
     ]);
+  });
+
+  it('should handle undefined json gracefully', async () => {
+    (global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ data: undefined }),
+    });
+
+    const models = await fetchModels('https://api.test.com');
+    expect(models).toEqual([]);
   });
 
   it('should handle empty data gracefully', async () => {
